@@ -2,6 +2,7 @@ import type { MutableRefObject } from 'react'
 import mapboxgl from 'mapbox-gl'
 import type { LidarDataset, LidarSample } from '@/utils/lidarCsvParser'
 import { polarToMercator } from '@/utils/lidarCsvParser'
+import { buildBarbInstanceBuffer, createWindBarbAtlas } from '@/utils/windBarb'
 
 export interface LidarWindLayerOptions {
   id?: string
@@ -9,12 +10,14 @@ export interface LidarWindLayerOptions {
   showPoints?: boolean
   showSurface?: boolean
   showVectors?: boolean
+  showWindBarbs?: boolean
   showScanBeam?: boolean
   showRangeRings?: boolean
   pointSize?: number
   pointOpacity?: number
   surfaceOpacity?: number
   vectorScale?: number
+  barbScale?: number
   scanSpeed?: number
   heightExaggeration?: number
   colorMode?: 'speed' | 'direction'
@@ -24,12 +27,14 @@ interface LayerParams {
   showPoints: boolean
   showSurface: boolean
   showVectors: boolean
+  showWindBarbs: boolean
   showScanBeam: boolean
   showRangeRings: boolean
   pointSize: number
   pointOpacity: number
   surfaceOpacity: number
   vectorScale: number
+  barbScale: number
   scanSpeed: number
   heightExaggeration: number
   colorMode: 'speed' | 'direction'
@@ -350,6 +355,58 @@ const BEAM_LINE_FS = `
   }
 `
 
+const BARB_VS = `
+  attribute vec3 a_pos;
+  attribute float a_direction;
+  attribute float a_bin;
+
+  uniform mat4 u_matrix;
+  uniform vec3 u_origin;
+  uniform float u_heightExaggeration;
+  uniform float u_pointSize;
+
+  varying float v_dir;
+  varying float v_bin;
+
+  void main() {
+    vec3 pos = a_pos;
+    pos.z = u_origin.z + (a_pos.z - u_origin.z) * u_heightExaggeration + 0.000003;
+    gl_Position = u_matrix * vec4(pos, 1.0);
+    gl_PointSize = u_pointSize;
+    v_dir = a_direction;
+    v_bin = a_bin;
+  }
+`
+
+const BARB_FS = `
+  precision highp float;
+
+  uniform sampler2D u_atlas;
+  uniform float u_bearing;
+  uniform float u_cols;
+  uniform float u_rows;
+
+  varying float v_dir;
+  varying float v_bin;
+
+  void main() {
+    float rad = radians(v_dir - u_bearing);
+    float c = cos(-rad);
+    float s = sin(-rad);
+    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    vec2 r = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+    vec2 local = r * 0.5 + 0.5;
+    if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) discard;
+
+    float col = mod(v_bin, u_cols);
+    float row = floor(v_bin / u_cols);
+    vec2 atlasUV = vec2((col + local.x) / u_cols, (row + local.y) / u_rows);
+    vec4 color = texture2D(u_atlas, atlasUV);
+    if (color.a < 0.1) discard;
+    gl_FragColor = color;
+  }
+`
+
 function buildPointBuffer(samples: LidarSample[]) {
   const data = new Float32Array(samples.length * 6)
   for (let i = 0; i < samples.length; i++) {
@@ -564,6 +621,7 @@ export function createLidarWindLayer(
   let surfaceProg: WebGLProgram | null = null
   let beamProg: WebGLProgram | null = null
   let beamLineProg: WebGLProgram | null = null
+  let barbProg: WebGLProgram | null = null
 
   let pointVB: WebGLBuffer | null = null
   let pointCount = 0
@@ -579,6 +637,11 @@ export function createLidarWindLayer(
   let beamIndexCount = 0
   let beamLineVB: WebGLBuffer | null = null
   let beamLineCount = 0
+  let barbVB: WebGLBuffer | null = null
+  let barbCount = 0
+  let barbTex: WebGLTexture | null = null
+  let barbAtlasCols = 8
+  let barbAtlasRows = 3
 
   let startTime = 0
 
@@ -670,6 +733,29 @@ export function createLidarWindLayer(
       const blvs = compileShader(gl, gl.VERTEX_SHADER, BEAM_LINE_VS)
       const blfs = compileShader(gl, gl.FRAGMENT_SHADER, BEAM_LINE_FS)
       if (blvs && blfs) beamLineProg = linkProgram(gl, blvs, blfs)
+
+      const barbData = buildBarbInstanceBuffer(dataset)
+      barbCount = barbData.length / 5
+      barbVB = gl.createBuffer()
+      gl.bindBuffer(gl.ARRAY_BUFFER, barbVB)
+      gl.bufferData(gl.ARRAY_BUFFER, barbData, gl.STATIC_DRAW)
+
+      const atlas = createWindBarbAtlas()
+      barbAtlasCols = atlas.cols
+      barbAtlasRows = atlas.rows
+      barbTex = gl.createTexture()
+      gl.bindTexture(gl.TEXTURE_2D, barbTex)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0)
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas.canvas)
+
+      const barbVs = compileShader(gl, gl.VERTEX_SHADER, BARB_VS)
+      const barbFs = compileShader(gl, gl.FRAGMENT_SHADER, BARB_FS)
+      if (barbVs && barbFs) barbProg = linkProgram(gl, barbVs, barbFs)
     },
 
     render(gl, matrix) {
@@ -818,14 +904,48 @@ export function createLidarWindLayer(
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
       }
 
+      if (params.showWindBarbs && barbProg && barbVB && barbTex) {
+        gl.useProgram(barbProg)
+        gl.depthMask(false)
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+        gl.uniformMatrix4fv(gl.getUniformLocation(barbProg, 'u_matrix')!, false, matrix)
+        gl.uniform3f(gl.getUniformLocation(barbProg, 'u_origin')!, origin[0], origin[1], origin[2])
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_heightExaggeration')!, params.heightExaggeration)
+        gl.uniform1f(
+          gl.getUniformLocation(barbProg, 'u_pointSize')!,
+          Math.min(96, 44 * params.barbScale * (window.devicePixelRatio || 1)),
+        )
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_bearing')!, mapRef.current?.getBearing() ?? 0)
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_cols')!, barbAtlasCols)
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_rows')!, barbAtlasRows)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, barbTex)
+        gl.uniform1i(gl.getUniformLocation(barbProg, 'u_atlas')!, 0)
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, barbVB)
+        const barbStride = 20
+        const aPos = gl.getAttribLocation(barbProg, 'a_pos')
+        gl.enableVertexAttribArray(aPos)
+        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, barbStride, 0)
+        const aDir = gl.getAttribLocation(barbProg, 'a_direction')
+        gl.enableVertexAttribArray(aDir)
+        gl.vertexAttribPointer(aDir, 1, gl.FLOAT, false, barbStride, 12)
+        const aBin = gl.getAttribLocation(barbProg, 'a_bin')
+        gl.enableVertexAttribArray(aBin)
+        gl.vertexAttribPointer(aBin, 1, gl.FLOAT, false, barbStride, 16)
+        gl.drawArrays(gl.POINTS, 0, barbCount)
+        gl.depthMask(true)
+      }
+
       mapRef.current?.triggerRepaint()
     },
 
     onRemove(_map, gl) {
-      for (const buf of [pointVB, surfaceVB, surfaceIB, vectorVB, ringVB, beamVB, beamIB, beamLineVB]) {
+      for (const buf of [pointVB, surfaceVB, surfaceIB, vectorVB, ringVB, beamVB, beamIB, beamLineVB, barbVB]) {
         if (buf) gl.deleteBuffer(buf)
       }
-      for (const prog of [pointProg, lineProg, surfaceProg, beamProg, beamLineProg]) {
+      if (barbTex) gl.deleteTexture(barbTex)
+      for (const prog of [pointProg, lineProg, surfaceProg, beamProg, beamLineProg, barbProg]) {
         if (prog) gl.deleteProgram(prog)
       }
     },

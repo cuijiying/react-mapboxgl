@@ -29,13 +29,15 @@ export default function LidarWindDemo() {
 
   const [showPoints, setShowPoints] = useState(true)
   const [showSurface, setShowSurface] = useState(true)
-  const [showVectors, setShowVectors] = useState(true)
+  const [showVectors, setShowVectors] = useState(false)
+  const [showWindBarbs, setShowWindBarbs] = useState(true)
   const [showScanBeam, setShowScanBeam] = useState(true)
   const [showRangeRings, setShowRangeRings] = useState(true)
   const [pointSize, setPointSize] = useState(6)
   const [pointOpacity, setPointOpacity] = useState(0.9)
   const [surfaceOpacity, setSurfaceOpacity] = useState(0.45)
   const [vectorScale, setVectorScale] = useState(1.0)
+  const [barbScale, setBarbScale] = useState(1.2)
   const [scanSpeed, setScanSpeed] = useState(8)
   const [heightExaggeration, setHeightExaggeration] = useState(3.5)
   const [colorMode, setColorMode] = useState<'speed' | 'direction'>('speed')
@@ -46,12 +48,14 @@ export default function LidarWindDemo() {
     showPoints,
     showSurface,
     showVectors,
+    showWindBarbs,
     showScanBeam,
     showRangeRings,
     pointSize,
     pointOpacity,
     surfaceOpacity,
     vectorScale,
+    barbScale,
     scanSpeed,
     heightExaggeration,
     colorMode,
@@ -61,12 +65,14 @@ export default function LidarWindDemo() {
     showPoints,
     showSurface,
     showVectors,
+    showWindBarbs,
     showScanBeam,
     showRangeRings,
     pointSize,
     pointOpacity,
     surfaceOpacity,
     vectorScale,
+    barbScale,
     scanSpeed,
     heightExaggeration,
     colorMode,
@@ -210,11 +216,13 @@ export default function LidarWindDemo() {
     showPoints,
     showSurface,
     showVectors,
+    showWindBarbs,
     showScanBeam,
     showRangeRings,
     pointSize,
     surfaceOpacity,
     vectorScale,
+    barbScale,
     scanSpeed,
     heightExaggeration,
     colorMode,
@@ -333,25 +341,64 @@ export default function LidarWindDemo() {
         )}
       </div>
 
-      <div className={styles.legend}>
-        <div className={styles.legendTitle}>
-          {colorMode === 'speed' ? '水平风速 (m/s)' : '风向 (°)'}
+      <div className={styles.legendStack}>
+        <div className={styles.legend}>
+          <div className={styles.legendTitle}>
+            {colorMode === 'speed' ? '水平风速 (m/s)' : '风向 (°)'}
+          </div>
+          <div className={styles.legendBar}>
+            {colorMode === 'speed' ? (
+              <>
+                <span>0</span>
+                <div className={styles.gradientSpeed} />
+                <span>{dataset?.windSpeedMax.toFixed(1) ?? '—'}</span>
+              </>
+            ) : (
+              <>
+                <span>N</span>
+                <div className={styles.gradientDir} />
+                <span>360°</span>
+              </>
+            )}
+          </div>
         </div>
-        <div className={styles.legendBar}>
-          {colorMode === 'speed' ? (
-            <>
-              <span>0</span>
-              <div className={styles.gradientSpeed} />
-              <span>{dataset?.windSpeedMax.toFixed(1) ?? '—'}</span>
-            </>
-          ) : (
-            <>
-              <span>N</span>
-              <div className={styles.gradientDir} />
-              <span>360°</span>
-            </>
-          )}
-        </div>
+
+        {showWindBarbs && (
+          <div className={styles.legend}>
+            <div className={styles.legendTitle}>风杆图例（北半球）</div>
+            <svg viewBox="0 0 168 86" className={styles.barbLegendSvg} aria-hidden>
+              <g fill="none" stroke="#0066FF" strokeWidth="2.2" strokeLinecap="round">
+                <circle cx="18" cy="28" r="4" fill="#0066FF" stroke="none" />
+                <circle cx="18" cy="28" r="8" />
+                <text x="32" y="32" fill="#8899aa" fontSize="10" stroke="none">
+                  静风
+                </text>
+
+                <circle cx="78" cy="28" r="3" fill="#0066FF" stroke="none" />
+                <line x1="78" y1="28" x2="78" y2="8" />
+                <line x1="78" y1="16" x2="66" y2="20" />
+                <text x="90" y="32" fill="#8899aa" fontSize="10" stroke="none">
+                  2 m/s 短划
+                </text>
+
+                <circle cx="18" cy="66" r="3" fill="#0066FF" stroke="none" />
+                <line x1="18" y1="66" x2="18" y2="42" />
+                <line x1="18" y1="42" x2="2" y2="50" />
+                <text x="32" y="70" fill="#8899aa" fontSize="10" stroke="none">
+                  4 m/s 长划
+                </text>
+
+                <circle cx="98" cy="66" r="3" fill="#0066FF" stroke="none" />
+                <line x1="98" y1="66" x2="98" y2="42" />
+                <polygon points="98,42 82,50 98,54" fill="#0066FF" stroke="none" />
+                <text x="112" y="70" fill="#8899aa" fontSize="10" stroke="none">
+                  20 m/s 旗
+                </text>
+              </g>
+            </svg>
+            <div className={styles.legendHint}>杆指向风的来向 · 风羽在杆左侧</div>
+          </div>
+        )}
       </div>
 
       <div className={styles.controlPanel}>
@@ -366,6 +413,7 @@ export default function LidarWindDemo() {
             [
               ['点云辉光', showPoints, setShowPoints],
               ['PPI 曲面', showSurface, setShowSurface],
+              ['风杆图', showWindBarbs, setShowWindBarbs],
               ['风向矢量', showVectors, setShowVectors],
               ['扫描波束', showScanBeam, setShowScanBeam],
               ['距离环', showRangeRings, setShowRangeRings],
@@ -450,6 +498,21 @@ export default function LidarWindDemo() {
             />
           </div>
           <div className={styles.sliderGroup}>
+            <label>风杆大小: {barbScale.toFixed(1)}×</label>
+            <input
+              type="range"
+              min={0.5}
+              max={3}
+              step={0.1}
+              value={barbScale}
+              disabled={!showWindBarbs}
+              onChange={(e) => {
+                setBarbScale(Number(e.target.value))
+                triggerRepaint()
+              }}
+            />
+          </div>
+          <div className={styles.sliderGroup}>
             <label>矢量长度: {vectorScale.toFixed(1)}×</label>
             <input
               type="range"
@@ -457,6 +520,7 @@ export default function LidarWindDemo() {
               max={3}
               step={0.1}
               value={vectorScale}
+              disabled={!showVectors}
               onChange={(e) => {
                 setVectorScale(Number(e.target.value))
                 triggerRepaint()

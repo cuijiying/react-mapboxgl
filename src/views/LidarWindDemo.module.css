@@ -140,16 +140,35 @@
   font-weight: 600;
 }
 
-.legend {
+.legendStack {
   position: absolute;
   bottom: 20px;
   left: 20px;
   z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.legend {
   background: rgba(5, 12, 24, 0.88);
   border: 1px solid rgba(0, 240, 255, 0.2);
   border-radius: 8px;
   padding: 10px 14px;
-  pointer-events: none;
+}
+
+.barbLegendSvg {
+  width: 200px;
+  height: auto;
+  display: block;
+  margin-top: 4px;
+}
+
+.legendHint {
+  font-size: 10px;
+  color: #667788;
+  margin-top: 4px;
 }
 
 .legendTitle {
