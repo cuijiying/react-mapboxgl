@@ -1,0 +1,59 @@
+.geoserver-demo-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.geoserver-info-panel {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  padding: 14px 18px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  font-size: 13px;
+  min-width: 200px;
+  pointer-events: none;
+}
+
+.geoserver-info-panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 15px;
+  color: #2c3e50;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 8px;
+}
+
+.geoserver-info-panel p {
+  margin: 4px 0;
+  color: #555;
+}
+
+.geoserver-legend {
+  margin: 10px 0 6px 0;
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+}
+
+.geoserver-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.geoserver-legend-color {
+  display: inline-block;
+  width: 20px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.geoserver-tip {
+  margin-top: 8px !important;
+  font-style: italic;
+  color: #888 !important;
+  font-size: 12px;
+}

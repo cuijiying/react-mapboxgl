@@ -1,0 +1,125 @@
+.demoContainer {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.mapContainer {
+  width: 100%;
+  height: 100%;
+}
+
+.controlPanel {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(20, 25, 35, 0.92);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 16px rgba(0, 255, 136, 0.15);
+  width: 280px;
+  max-height: 80vh;
+  overflow-y: auto;
+  color: #c8d6e5;
+  border: 1px solid rgba(0, 255, 136, 0.2);
+}
+
+.controlPanel h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: #00ff88;
+  border-bottom: 2px solid #00ff88;
+  padding-bottom: 6px;
+  text-align: center;
+  letter-spacing: 2px;
+}
+
+.panelSection {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.panelSection:last-of-type {
+  border-bottom: none;
+}
+
+.panelSection h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: #00cc6a;
+  font-weight: 500;
+}
+
+.sliderGroup {
+  margin-bottom: 10px;
+}
+
+.sliderGroup label {
+  display: block;
+  font-size: 12px;
+  color: #8899aa;
+  margin-bottom: 4px;
+}
+
+.sliderGroup input[type='range'] {
+  width: 100%;
+  cursor: pointer;
+  accent-color: #00ff88;
+}
+
+.sliderGroup input[type='range']:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.checkboxGroup {
+  margin-bottom: 8px;
+}
+
+.checkboxGroup label {
+  font-size: 12px;
+  color: #8899aa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.checkboxGroup input[type='checkbox'] {
+  accent-color: #00ff88;
+}
+
+.colorRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.colorRow label {
+  font-size: 12px;
+  color: #8899aa;
+}
+
+.colorRow input[type='color'] {
+  width: 50px;
+  height: 26px;
+  border: 1px solid rgba(0, 255, 136, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.infoText {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.infoText p {
+  font-size: 11px;
+  color: #556677;
+  margin: 3px 0;
+  line-height: 1.5;
+}

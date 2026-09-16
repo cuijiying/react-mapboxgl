@@ -1,0 +1,71 @@
+.drone-info-popup .mapboxgl-popup-content {
+  padding: 0;
+  overflow: hidden;
+  color: #dff8ff;
+  background: rgba(8, 16, 28, 0.94);
+  border: 1px solid rgba(41, 255, 208, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+}
+
+.drone-info-popup .mapboxgl-popup-tip {
+  border-top-color: rgba(8, 16, 28, 0.94);
+  border-bottom-color: rgba(8, 16, 28, 0.94);
+}
+
+.drone-info-popup .mapboxgl-popup-close-button {
+  top: 6px;
+  right: 8px;
+  color: #9fb6c7;
+  font-size: 20px;
+}
+
+.drone-popup {
+  width: min(340px, calc(100vw - 40px));
+  max-height: min(520px, calc(100vh - 120px));
+  overflow: auto;
+}
+
+.drone-popup-title {
+  padding: 12px 36px 10px 14px;
+  color: #29ffd0;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+  border-bottom: 1px solid rgba(41, 255, 208, 0.22);
+  background: rgba(41, 255, 208, 0.08);
+}
+
+.drone-popup-grid {
+  display: grid;
+  gap: 0;
+  padding: 8px 12px 12px;
+}
+
+.drone-popup-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 5px 0;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.drone-popup-row:last-child {
+  border-bottom: 0;
+}
+
+.drone-popup-row span {
+  color: #8fa8b8;
+}
+
+.drone-popup-row b {
+  min-width: 0;
+  color: #eefcff;
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}

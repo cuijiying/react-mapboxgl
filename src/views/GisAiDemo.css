@@ -1,0 +1,202 @@
+.gis-ai-demo-container {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.gis-ai-map-container {
+  flex: 1;
+  min-width: 0;
+}
+
+.gis-ai-panel {
+  width: 360px;
+  min-width: 360px;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border-left: 1px solid #2a2a4a;
+}
+
+.gis-ai-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: #16213e;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.gis-ai-header-icon {
+  font-size: 28px;
+}
+
+.gis-ai-header-info h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.gis-ai-status-text {
+  font-size: 12px;
+  color: #6c7983;
+}
+
+.gis-ai-chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gis-ai-message {
+  display: flex;
+}
+
+.gis-ai-message.user {
+  justify-content: flex-end;
+}
+
+.gis-ai-message-bubble {
+  max-width: 90%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.gis-ai-message.assistant .gis-ai-message-bubble {
+  background: #1e2a3a;
+  color: #d0d8e0;
+  border-bottom-left-radius: 4px;
+}
+
+.gis-ai-message.user .gis-ai-message-bubble {
+  background: #3b82f6;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.gis-ai-thinking-bubble {
+  display: flex;
+  gap: 5px;
+  padding: 14px 20px;
+}
+
+.gis-ai-thinking-bubble .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #555;
+  animation: gis-ai-bounce 1.2s infinite;
+}
+
+.gis-ai-thinking-bubble .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.gis-ai-thinking-bubble .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes gis-ai-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-6px);
+  }
+}
+
+.gis-ai-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid #2a2a4a;
+}
+
+.gis-ai-action-btn {
+  padding: 6px 10px;
+  border: 1px solid #3a3a5a;
+  border-radius: 16px;
+  background: transparent;
+  color: #a0a8b4;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.gis-ai-action-btn:hover {
+  background: #2a2a4a;
+  color: #fff;
+  border-color: #4a4a6a;
+}
+
+.gis-ai-action-btn.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.gis-ai-input-area {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid #2a2a4a;
+}
+
+.gis-ai-chat-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #3a3a5a;
+  border-radius: 8px;
+  background: #0f0f23;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
+}
+
+.gis-ai-chat-input:focus {
+  border-color: #3b82f6;
+}
+
+.gis-ai-chat-input::placeholder {
+  color: #555;
+}
+
+.gis-ai-send-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.gis-ai-send-btn:hover {
+  background: #2563eb;
+}
+
+.gis-ai-chat-area::-webkit-scrollbar {
+  width: 4px;
+}
+
+.gis-ai-chat-area::-webkit-scrollbar-thumb {
+  background: #3a3a5a;
+  border-radius: 2px;
+}
+
+.gis-ai-chat-area::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -1,0 +1,115 @@
+.wind-demo-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.wind-control-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+}
+
+.wind-panel-card {
+  background: rgba(30, 30, 46, 0.92);
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  min-width: 220px;
+  color: #e0e0e0;
+}
+
+.wind-panel-title {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  padding-bottom: 6px;
+}
+
+.wind-slider-group {
+  margin-bottom: 8px;
+}
+
+.wind-slider-group label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 3px;
+  color: #ccc;
+}
+
+.wind-slider-group label strong {
+  color: #6ec6ff;
+}
+
+.wind-slider-group input[type='range'] {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.wind-slider-group input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #6ec6ff;
+  cursor: pointer;
+  border: 2px solid #fff;
+}
+
+.wind-slider-group input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #6ec6ff;
+  cursor: pointer;
+  border: 2px solid #fff;
+}
+
+.wind-legend-bar {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    #3288bd,
+    #66c2a5,
+    #abdda4,
+    #e6f598,
+    #fee08b,
+    #fdae61,
+    #f46d43,
+    #d53e4f
+  );
+  margin-bottom: 4px;
+}
+
+.wind-legend-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #aaa;
+}
+
+.wind-info-card .wind-info-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.wind-info-card .wind-info-label {
+  color: #999;
+}
