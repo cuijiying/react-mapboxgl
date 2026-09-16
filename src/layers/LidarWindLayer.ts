@@ -178,6 +178,7 @@ const LINE_FS = `
 const SURFACE_VS = `
   attribute vec3 a_pos;
   attribute float a_speed;
+  attribute float a_azimuth;
 
   uniform mat4 u_matrix;
   uniform float u_speedMin;
@@ -187,6 +188,7 @@ const SURFACE_VS = `
 
   varying vec3 v_color;
   varying float v_height;
+  varying float v_azimuth;
 
   vec3 speedColor(float t) {
     t = clamp(t, 0.0, 1.0);
@@ -200,6 +202,7 @@ const SURFACE_VS = `
     vec3 pos = a_pos;
     pos.z = u_origin.z + (a_pos.z - u_origin.z) * u_heightExaggeration;
     v_height = (pos.z - u_origin.z);
+    v_azimuth = a_azimuth;
     float speedNorm = (a_speed - u_speedMin) / max(u_speedMax - u_speedMin, 0.001);
     v_color = speedColor(speedNorm);
     gl_Position = u_matrix * vec4(pos, 1.0);
@@ -210,61 +213,140 @@ const SURFACE_FS = `
   precision mediump float;
   varying vec3 v_color;
   varying float v_height;
+  varying float v_azimuth;
   uniform float u_opacity;
   uniform float u_time;
+  uniform float u_scanAzimuthDeg;
+  uniform float u_scanTrailDeg;
+
+  float wrapAngleDiff(float a, float b) {
+    float d = a - b;
+    return abs(mod(d + 180.0, 360.0) - 180.0);
+  }
 
   void main() {
     float shimmer = 0.85 + 0.15 * sin(u_time * 2.0 + v_height * 80.0);
     vec3 color = v_color * shimmer;
     float alpha = u_opacity * (0.35 + v_height * 120.0);
-    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.75));
+
+    float angleDiff = wrapAngleDiff(v_azimuth, u_scanAzimuthDeg);
+    if (angleDiff < u_scanTrailDeg) {
+      float trail = 1.0 - angleDiff / max(u_scanTrailDeg, 0.001);
+      trail = pow(trail, 1.8);
+      color += vec3(0.0, 0.85, 1.0) * trail * 0.55;
+      alpha += trail * 0.25;
+    }
+
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.85));
   }
 `
 
 const BEAM_VS = `
-  attribute vec4 a_pos;
+  attribute vec3 a_attr;
   uniform mat4 u_matrix;
-  uniform float u_scanAngle;
+  uniform float u_scanAngleRad;
+  uniform float u_pitchRad;
   uniform vec3 u_origin;
-  uniform float u_radius;
+  uniform float u_meterScale;
+  uniform float u_maxDistMeters;
   uniform float u_heightExaggeration;
 
-  varying float v_heightNorm;
   varying float v_radial;
+  varying float v_angularOff;
+  varying float v_layer;
 
   void main() {
-    float c = cos(u_scanAngle);
-    float s = sin(u_scanAngle);
-    float rx = a_pos.x * c - a_pos.y * s;
-    float ry = a_pos.x * s + a_pos.y * c;
+    float dist = a_attr.x * u_maxDistMeters;
+    float az = u_scanAngleRad + a_attr.y * 0.01745329252;
+    float horiz = dist * cos(u_pitchRad);
+    float up = dist * sin(u_pitchRad);
+    float east = horiz * sin(az);
+    float north = horiz * cos(az);
 
     vec3 worldPos = vec3(
-      u_origin.x + rx * u_radius,
-      u_origin.y - ry * u_radius,
-      u_origin.z + a_pos.z * u_radius * u_heightExaggeration * 4.0
+      u_origin.x + east * u_meterScale,
+      u_origin.y - north * u_meterScale,
+      u_origin.z + up * u_meterScale * u_heightExaggeration
     );
 
-    v_heightNorm = a_pos.z;
-    v_radial = a_pos.w;
+    v_radial = a_attr.x;
+    v_angularOff = a_attr.y;
+    v_layer = a_attr.z;
     gl_Position = u_matrix * vec4(worldPos, 1.0);
   }
 `
 
 const BEAM_FS = `
-  precision mediump float;
+  precision highp float;
   uniform float u_opacity;
   uniform float u_time;
-  varying float v_heightNorm;
   varying float v_radial;
+  varying float v_angularOff;
+  varying float v_layer;
 
   void main() {
-    float edge = 1.0 - abs(v_radial - 0.5) * 2.0;
-    edge = pow(edge, 3.0);
-    float heightFade = 1.0 - v_heightNorm * 0.5;
-    float pulse = 0.7 + 0.3 * sin(u_time * 6.0);
-    vec3 color = mix(vec3(0.0, 0.9, 1.0), vec3(0.2, 1.0, 0.6), v_heightNorm);
-    float alpha = edge * heightFade * u_opacity * pulse;
-    gl_FragColor = vec4(color, alpha);
+    float isBeam = step(0.5, v_layer);
+    float edgeFade = 1.0 - abs(v_angularOff) / mix(18.0, 1.2, isBeam);
+    edgeFade = clamp(edgeFade, 0.0, 1.0);
+    edgeFade = pow(edgeFade, mix(1.2, 3.5, isBeam));
+
+    float radialFade = mix(0.35, 1.0, isBeam) * (1.0 - v_radial * 0.15);
+    float pulse = 0.65 + 0.35 * sin(u_time * 8.0);
+    float wave = sin(v_radial * 28.0 - u_time * 10.0) * 0.5 + 0.5;
+    float energyPulse = pow(wave, 3.0) * (1.0 - v_radial * 0.4);
+
+    vec3 beamColor = mix(vec3(0.0, 0.95, 1.0), vec3(0.3, 1.0, 0.55), v_radial);
+    vec3 trailColor = vec3(0.0, 0.55, 0.85);
+    vec3 color = mix(trailColor, beamColor, isBeam);
+    color += vec3(1.0) * energyPulse * isBeam * 0.45;
+    color += vec3(0.0, 1.0, 0.85) * (1.0 - abs(v_angularOff) / 1.2) * isBeam * 0.6;
+
+    float alpha = edgeFade * radialFade * u_opacity;
+    alpha *= mix(0.22, 0.75, isBeam) * pulse;
+    alpha += energyPulse * isBeam * 0.2;
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.92));
+  }
+`
+
+const BEAM_LINE_VS = `
+  attribute vec3 a_attr;
+  uniform mat4 u_matrix;
+  uniform float u_scanAngleRad;
+  uniform float u_pitchRad;
+  uniform vec3 u_origin;
+  uniform float u_meterScale;
+  uniform float u_maxDistMeters;
+  uniform float u_heightExaggeration;
+  varying float v_t;
+
+  void main() {
+    float dist = a_attr.x * u_maxDistMeters;
+    float az = u_scanAngleRad + a_attr.y * 0.01745329252;
+    float horiz = dist * cos(u_pitchRad);
+    float up = dist * sin(u_pitchRad);
+    float east = horiz * sin(az);
+    float north = horiz * cos(az);
+    vec3 worldPos = vec3(
+      u_origin.x + east * u_meterScale,
+      u_origin.y - north * u_meterScale,
+      u_origin.z + up * u_meterScale * u_heightExaggeration
+    );
+    v_t = a_attr.x;
+    gl_Position = u_matrix * vec4(worldPos, 1.0);
+  }
+`
+
+const BEAM_LINE_FS = `
+  precision mediump float;
+  uniform float u_time;
+  uniform float u_opacity;
+  varying float v_t;
+
+  void main() {
+    float pulse = 0.7 + 0.3 * sin(u_time * 12.0 - v_t * 40.0);
+    float head = 1.0 - smoothstep(0.92, 1.0, v_t);
+    vec3 color = mix(vec3(0.0, 0.9, 1.0), vec3(1.0), head);
+    gl_FragColor = vec4(color, (0.55 + head * 0.45) * pulse * u_opacity);
   }
 `
 
@@ -301,8 +383,8 @@ function buildSurfaceMesh(dataset: LidarDataset): { vertices: Float32Array; indi
     const key = `${s.azimuth}_${s.distance}`
     const existing = indexMap.get(key)
     if (existing !== undefined) return existing
-    const idx = vertices.length / 4
-    vertices.push(s.x, s.y, s.z, s.hWindSpeed ?? 0)
+    const idx = vertices.length / 5
+    vertices.push(s.x, s.y, s.z, s.hWindSpeed ?? 0, s.azimuth)
     indexMap.set(key, idx)
     return idx
   }
@@ -400,36 +482,63 @@ function buildRangeRings(
   return new Float32Array(segments)
 }
 
-function buildScanBeamMesh(): { vertices: Float32Array; indices: Uint16Array } {
-  const R_SEGS = 16
-  const A_SEGS = 6
-  const halfAngle = (2.5 * Math.PI) / 180
+function buildPpiScanMeshes(): {
+  wedge: { vertices: Float32Array; indices: Uint16Array }
+  beamLine: Float32Array
+} {
+  const R_SEGS = 32
   const vertices: number[] = []
   const indices: number[] = []
 
-  for (let ri = 0; ri <= R_SEGS; ri++) {
-    const r = ri / R_SEGS
-    for (let ai = 0; ai <= A_SEGS; ai++) {
-      const t = ai / A_SEGS
-      const a = (t - 0.5) * 2 * halfAngle
-      vertices.push(r * Math.cos(a), r * Math.sin(a), 4 * r * (1 - r), t)
+  function addWedge(
+    radialStart: number,
+    radialEnd: number,
+    azStart: number,
+    azEnd: number,
+    layer: number,
+    radialSegs: number,
+    azSegs: number,
+  ) {
+    const baseIdx = vertices.length / 3
+    for (let ri = 0; ri <= radialSegs; ri++) {
+      const r = radialStart + (radialEnd - radialStart) * (ri / radialSegs)
+      for (let ai = 0; ai <= azSegs; ai++) {
+        const az = azStart + (azEnd - azStart) * (ai / azSegs)
+        vertices.push(r, az, layer)
+      }
+    }
+    for (let ri = 0; ri < radialSegs; ri++) {
+      for (let ai = 0; ai < azSegs; ai++) {
+        const i0 = baseIdx + ri * (azSegs + 1) + ai
+        const i1 = i0 + 1
+        const i2 = i0 + azSegs + 1
+        const i3 = i2 + 1
+        indices.push(i0, i2, i1, i1, i2, i3)
+      }
     }
   }
 
-  for (let ri = 0; ri < R_SEGS; ri++) {
-    for (let ai = 0; ai < A_SEGS; ai++) {
-      const i0 = ri * (A_SEGS + 1) + ai
-      indices.push(i0, i0 + A_SEGS + 1, i0 + 1, i0 + 1, i0 + A_SEGS + 1, i0 + 2)
-    }
+  // 扫描拖尾扇面（波束后方）
+  addWedge(0, 1, -22, 0, 0, R_SEGS, 14)
+  // 主波束窄扇面（从中心射出）
+  addWedge(0, 1, -0.8, 0.8, 1, R_SEGS, 4)
+
+  const lineSegs = 48
+  const lineVerts: number[] = [0, 0, 1]
+  for (let i = 1; i <= lineSegs; i++) {
+    lineVerts.push(i / lineSegs, 0, 1)
   }
 
-  return { vertices: new Float32Array(vertices), indices: new Uint16Array(indices) }
+  return {
+    wedge: { vertices: new Float32Array(vertices), indices: new Uint16Array(indices) },
+    beamLine: new Float32Array(lineVerts),
+  }
 }
 
 export function createLidarWindLayer(
   mapRef: MutableRefObject<mapboxgl.Map | null>,
   dataset: LidarDataset,
-  paramsRef: React.MutableRefObject<LayerParams>,
+  paramsRef: MutableRefObject<LayerParams>,
 ): mapboxgl.CustomLayerInterface {
   const { metadata } = dataset
   const [originX, originY, originZ] = polarToMercator(
@@ -441,15 +550,20 @@ export function createLidarWindLayer(
     0,
   )
   const origin = [originX, originY, originZ] as const
-  const radiusMerc = mapboxgl.MercatorCoordinate.fromLngLat(
+  const meterScale = mapboxgl.MercatorCoordinate.fromLngLat(
     [metadata.longitude, metadata.latitude],
     metadata.seaHeight,
-  ).meterInMercatorCoordinateUnits() * dataset.maxDistance
+  ).meterInMercatorCoordinateUnits()
+  const pitchRad = (metadata.fixAngle * Math.PI) / 180
+  const maxAzimuth = Math.max(...dataset.azimuths)
+  const minAzimuth = Math.min(...dataset.azimuths)
+  const azimuthSpan = maxAzimuth - minAzimuth
 
   let pointProg: WebGLProgram | null = null
   let lineProg: WebGLProgram | null = null
   let surfaceProg: WebGLProgram | null = null
   let beamProg: WebGLProgram | null = null
+  let beamLineProg: WebGLProgram | null = null
 
   let pointVB: WebGLBuffer | null = null
   let pointCount = 0
@@ -463,8 +577,24 @@ export function createLidarWindLayer(
   let beamVB: WebGLBuffer | null = null
   let beamIB: WebGLBuffer | null = null
   let beamIndexCount = 0
+  let beamLineVB: WebGLBuffer | null = null
+  let beamLineCount = 0
 
   let startTime = 0
+
+  function setBeamUniforms(
+    gl: WebGLRenderingContext,
+    prog: WebGLProgram,
+    scanAngleRad: number,
+    heightExaggeration: number,
+  ) {
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_scanAngleRad')!, scanAngleRad)
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_pitchRad')!, pitchRad)
+    gl.uniform3f(gl.getUniformLocation(prog, 'u_origin')!, origin[0], origin[1], origin[2])
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_meterScale')!, meterScale)
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_maxDistMeters')!, dataset.maxDistance)
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_heightExaggeration')!, heightExaggeration)
+  }
 
   return {
     id: 'lidar-wind-layer',
@@ -507,14 +637,19 @@ export function createLidarWindLayer(
       gl.bindBuffer(gl.ARRAY_BUFFER, ringVB)
       gl.bufferData(gl.ARRAY_BUFFER, ringData, gl.STATIC_DRAW)
 
-      const beam = buildScanBeamMesh()
+      const scanMeshes = buildPpiScanMeshes()
       beamVB = gl.createBuffer()
       gl.bindBuffer(gl.ARRAY_BUFFER, beamVB)
-      gl.bufferData(gl.ARRAY_BUFFER, beam.vertices, gl.STATIC_DRAW)
+      gl.bufferData(gl.ARRAY_BUFFER, scanMeshes.wedge.vertices, gl.STATIC_DRAW)
       beamIB = gl.createBuffer()
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, beamIB)
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, beam.indices, gl.STATIC_DRAW)
-      beamIndexCount = beam.indices.length
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, scanMeshes.wedge.indices, gl.STATIC_DRAW)
+      beamIndexCount = scanMeshes.wedge.indices.length
+
+      beamLineVB = gl.createBuffer()
+      gl.bindBuffer(gl.ARRAY_BUFFER, beamLineVB)
+      gl.bufferData(gl.ARRAY_BUFFER, scanMeshes.beamLine, gl.STATIC_DRAW)
+      beamLineCount = scanMeshes.beamLine.length / 3
 
       const pvs = compileShader(gl, gl.VERTEX_SHADER, POINT_VS)
       const pfs = compileShader(gl, gl.FRAGMENT_SHADER, POINT_FS)
@@ -531,12 +666,18 @@ export function createLidarWindLayer(
       const bvs = compileShader(gl, gl.VERTEX_SHADER, BEAM_VS)
       const bfs = compileShader(gl, gl.FRAGMENT_SHADER, BEAM_FS)
       if (bvs && bfs) beamProg = linkProgram(gl, bvs, bfs)
+
+      const blvs = compileShader(gl, gl.VERTEX_SHADER, BEAM_LINE_VS)
+      const blfs = compileShader(gl, gl.FRAGMENT_SHADER, BEAM_LINE_FS)
+      if (blvs && blfs) beamLineProg = linkProgram(gl, blvs, blfs)
     },
 
     render(gl, matrix) {
       const params = paramsRef.current
       const time = (performance.now() - startTime) / 1000
-      const scanAngle = (time * params.scanSpeed * 2 * Math.PI) / 60
+      const scanProgress = (time * params.scanSpeed) / 60
+      const scanAzimuthDeg = minAzimuth + (scanProgress % 1) * azimuthSpan
+      const scanAngleRad = (scanAzimuthDeg * Math.PI) / 180
 
       gl.enable(gl.BLEND)
       gl.enable(gl.DEPTH_TEST)
@@ -587,14 +728,20 @@ export function createLidarWindLayer(
         gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_heightExaggeration')!, params.heightExaggeration)
         gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_opacity')!, params.surfaceOpacity)
         gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_time')!, time)
+        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_scanAzimuthDeg')!, scanAzimuthDeg)
+        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_scanTrailDeg')!, 25)
 
         gl.bindBuffer(gl.ARRAY_BUFFER, surfaceVB)
+        const surfStride = 20
         const aPos = gl.getAttribLocation(surfaceProg, 'a_pos')
         gl.enableVertexAttribArray(aPos)
-        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 16, 0)
+        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, surfStride, 0)
         const aSpeed = gl.getAttribLocation(surfaceProg, 'a_speed')
         gl.enableVertexAttribArray(aSpeed)
-        gl.vertexAttribPointer(aSpeed, 1, gl.FLOAT, false, 16, 12)
+        gl.vertexAttribPointer(aSpeed, 1, gl.FLOAT, false, surfStride, 12)
+        const aAz = gl.getAttribLocation(surfaceProg, 'a_azimuth')
+        gl.enableVertexAttribArray(aAz)
+        gl.vertexAttribPointer(aAz, 1, gl.FLOAT, false, surfStride, 16)
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, surfaceIB)
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
@@ -602,24 +749,36 @@ export function createLidarWindLayer(
       }
 
       if (params.showScanBeam && beamProg && beamVB && beamIB) {
-        gl.useProgram(beamProg)
         gl.disable(gl.CULL_FACE)
         gl.depthMask(false)
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE)
+
+        gl.useProgram(beamProg)
         gl.uniformMatrix4fv(gl.getUniformLocation(beamProg, 'u_matrix')!, false, matrix)
-        gl.uniform1f(gl.getUniformLocation(beamProg, 'u_scanAngle')!, scanAngle)
-        gl.uniform3f(gl.getUniformLocation(beamProg, 'u_origin')!, origin[0], origin[1], origin[2])
-        gl.uniform1f(gl.getUniformLocation(beamProg, 'u_radius')!, radiusMerc)
-        gl.uniform1f(gl.getUniformLocation(beamProg, 'u_heightExaggeration')!, params.heightExaggeration)
-        gl.uniform1f(gl.getUniformLocation(beamProg, 'u_opacity')!, 0.55)
+        setBeamUniforms(gl, beamProg, scanAngleRad, params.heightExaggeration)
+        gl.uniform1f(gl.getUniformLocation(beamProg, 'u_opacity')!, 0.65)
         gl.uniform1f(gl.getUniformLocation(beamProg, 'u_time')!, time)
 
         gl.bindBuffer(gl.ARRAY_BUFFER, beamVB)
-        const aPos = gl.getAttribLocation(beamProg, 'a_pos')
-        gl.enableVertexAttribArray(aPos)
-        gl.vertexAttribPointer(aPos, 4, gl.FLOAT, false, 16, 0)
+        const aAttr = gl.getAttribLocation(beamProg, 'a_attr')
+        gl.enableVertexAttribArray(aAttr)
+        gl.vertexAttribPointer(aAttr, 3, gl.FLOAT, false, 12, 0)
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, beamIB)
         gl.drawElements(gl.TRIANGLES, beamIndexCount, gl.UNSIGNED_SHORT, 0)
+
+        if (beamLineProg && beamLineVB) {
+          gl.useProgram(beamLineProg)
+          gl.uniformMatrix4fv(gl.getUniformLocation(beamLineProg, 'u_matrix')!, false, matrix)
+          setBeamUniforms(gl, beamLineProg, scanAngleRad, params.heightExaggeration)
+          gl.uniform1f(gl.getUniformLocation(beamLineProg, 'u_opacity')!, 0.9)
+          gl.uniform1f(gl.getUniformLocation(beamLineProg, 'u_time')!, time)
+          gl.bindBuffer(gl.ARRAY_BUFFER, beamLineVB)
+          const aLine = gl.getAttribLocation(beamLineProg, 'a_attr')
+          gl.enableVertexAttribArray(aLine)
+          gl.vertexAttribPointer(aLine, 3, gl.FLOAT, false, 12, 0)
+          gl.drawArrays(gl.LINE_STRIP, 0, beamLineCount)
+        }
+
         gl.depthMask(true)
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
       }
@@ -663,10 +822,10 @@ export function createLidarWindLayer(
     },
 
     onRemove(_map, gl) {
-      for (const buf of [pointVB, surfaceVB, surfaceIB, vectorVB, ringVB, beamVB, beamIB]) {
+      for (const buf of [pointVB, surfaceVB, surfaceIB, vectorVB, ringVB, beamVB, beamIB, beamLineVB]) {
         if (buf) gl.deleteBuffer(buf)
       }
-      for (const prog of [pointProg, lineProg, surfaceProg, beamProg]) {
+      for (const prog of [pointProg, lineProg, surfaceProg, beamProg, beamLineProg]) {
         if (prog) gl.deleteProgram(prog)
       }
     },

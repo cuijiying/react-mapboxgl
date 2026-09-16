@@ -180,11 +180,16 @@ export default function LidarWindDemo() {
       })
     })
 
+    const minAz = Math.min(...dataset.azimuths)
+    const maxAz = Math.max(...dataset.azimuths)
+    const azSpan = maxAz - minAz
+
     let animId = 0
     const tick = () => {
       const t = performance.now() / 1000
       const speed = paramsRef.current.scanSpeed
-      setScanAngle(((t * speed * 360) / 60) % 360)
+      const progress = (t * speed) / 60
+      setScanAngle(minAz + (progress % 1) * azSpan)
       animId = requestAnimationFrame(tick)
     }
     animId = requestAnimationFrame(tick)
