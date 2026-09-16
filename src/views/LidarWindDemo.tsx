@@ -3,13 +3,25 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { MAPBOX_ACCESS_TOKEN, MAP_STYLES } from '@/config/mapbox'
 import { createLidarWindLayer, type LidarLayerParams } from '@/layers/LidarWindLayer'
-import { loadLidarDataset, type LidarDataset } from '@/utils/lidarCsvParser'
+import { loadLidarDataset, type LidarDataset, type LidarSample } from '@/utils/lidarCsvParser'
+import {
+  buildLidarSampleIndex,
+  queryLidarAtLngLat,
+  type LidarHoverInfo,
+} from '@/utils/lidarQuery'
 import styles from './LidarWindDemo.module.css'
+
+interface HoverState {
+  x: number
+  y: number
+  info: LidarHoverInfo
+}
 
 export default function LidarWindDemo() {
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const layerAddedRef = useRef(false)
+  const sampleIndexRef = useRef<Map<string, LidarSample> | null>(null)
 
   const [dataset, setDataset] = useState<LidarDataset | null>(null)
   const [loading, setLoading] = useState(true)
@@ -28,6 +40,7 @@ export default function LidarWindDemo() {
   const [heightExaggeration, setHeightExaggeration] = useState(3.5)
   const [colorMode, setColorMode] = useState<'speed' | 'direction'>('speed')
   const [scanAngle, setScanAngle] = useState(0)
+  const [hover, setHover] = useState<HoverState | null>(null)
 
   const paramsRef = useRef<LidarLayerParams>({
     showPoints,
@@ -67,6 +80,7 @@ export default function LidarWindDemo() {
       .then((data) => {
         if (!cancelled) {
           setDataset(data)
+          sampleIndexRef.current = buildLidarSampleIndex(data)
           setLoading(false)
         }
       })
@@ -99,6 +113,33 @@ export default function LidarWindDemo() {
 
     mapRef.current = map
     map.addControl(new mapboxgl.NavigationControl(), 'top-right')
+
+    const onMouseMove = (e: mapboxgl.MapMouseEvent) => {
+      const index = sampleIndexRef.current
+      if (!index) return
+
+      const info = queryLidarAtLngLat(dataset, index, e.lngLat.lng, e.lngLat.lat)
+      if (!info) {
+        setHover(null)
+        map.getCanvas().style.cursor = ''
+        return
+      }
+
+      map.getCanvas().style.cursor = 'crosshair'
+      setHover({
+        x: e.point.x,
+        y: e.point.y,
+        info,
+      })
+    }
+
+    const onMouseLeave = () => {
+      setHover(null)
+      map.getCanvas().style.cursor = ''
+    }
+
+    map.on('mousemove', onMouseMove)
+    map.on('mouseleave', onMouseLeave)
 
     map.on('load', () => {
       map.addLayer(createLidarWindLayer(mapRef, dataset, paramsRef))
@@ -150,6 +191,8 @@ export default function LidarWindDemo() {
 
     return () => {
       cancelAnimationFrame(animId)
+      map.off('mousemove', onMouseMove)
+      map.off('mouseleave', onMouseLeave)
       map.remove()
       mapRef.current = null
       layerAddedRef.current = false
@@ -179,6 +222,50 @@ export default function LidarWindDemo() {
       <div ref={mapContainerRef} className={styles.mapContainer} />
 
       <div className={styles.scanlineOverlay} aria-hidden />
+
+      {hover && (
+        <div
+          className={styles.hoverTooltip}
+          style={{ left: hover.x + 16, top: hover.y + 16 }}
+        >
+          <div className={styles.tooltipHeader}>探测值</div>
+          <div className={styles.tooltipRow}>
+            <span>方位角</span>
+            <strong>{hover.info.queryAzimuth.toFixed(0)}°</strong>
+          </div>
+          <div className={styles.tooltipRow}>
+            <span>斜距</span>
+            <strong>{hover.info.sample.distance} m</strong>
+          </div>
+          <div className={styles.tooltipRow}>
+            <span>水平风速</span>
+            <strong>
+              {hover.info.sample.hWindSpeed !== null
+                ? `${hover.info.sample.hWindSpeed.toFixed(2)} m/s`
+                : '—'}
+            </strong>
+          </div>
+          <div className={styles.tooltipRow}>
+            <span>水平风向</span>
+            <strong>
+              {hover.info.sample.hWindDirection !== null
+                ? `${hover.info.sample.hWindDirection.toFixed(1)}°`
+                : '—'}
+            </strong>
+          </div>
+          <div className={styles.tooltipRow}>
+            <span>垂直风速</span>
+            <strong>
+              {hover.info.sample.vWindSpeed !== null
+                ? `${hover.info.sample.vWindSpeed.toFixed(2)} m/s`
+                : '—'}
+            </strong>
+          </div>
+          <div className={styles.tooltipCoords}>
+            {hover.info.lat.toFixed(4)}°N, {hover.info.lng.toFixed(4)}°E
+          </div>
+        </div>
+      )}
 
       <div className={styles.hudTop}>
         <div className={styles.hudBrand}>
