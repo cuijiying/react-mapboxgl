@@ -12,8 +12,8 @@ export const WIND_BARB_MAX_SPEED = 40
 export const WIND_BARB_ATLAS_COLS = 8
 export const WIND_BARB_ATLAS_CELL = 128
 
-const BARB_BLUE = '#0066FF'
-const BARB_BLUE_BRIGHT = '#4DA3FF'
+const BARB_FILL = '#F4F8FF'
+const BARB_HIGHLIGHT = '#FFFFFF'
 const BARB_OUTLINE = '#021433'
 
 export function speedToBin(speedMps: number): number {
@@ -127,14 +127,14 @@ export function drawWindBarb(
   ctx.clearRect(0, 0, size, size)
   ctx.save()
 
-  ctx.shadowColor = 'rgba(0, 80, 255, 0.4)'
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.35)'
   ctx.shadowBlur = size * 0.045
-  paintBarb(ctx, speedMps, size, BARB_BLUE, 1.05)
+  paintBarb(ctx, speedMps, size, BARB_FILL, 1.05)
   ctx.shadowBlur = 0
 
   paintBarb(ctx, speedMps, size, BARB_OUTLINE, 1.25, false)
-  paintBarb(ctx, speedMps, size, BARB_BLUE, 0.95)
-  paintBarb(ctx, speedMps, size, BARB_BLUE_BRIGHT, 0.45, false)
+  paintBarb(ctx, speedMps, size, BARB_FILL, 0.95)
+  paintBarb(ctx, speedMps, size, BARB_HIGHLIGHT, 0.45, false)
 
   ctx.restore()
 }
@@ -176,7 +176,7 @@ const BARB_QUAD_CORNERS: Array<[number, number]> = [
   [1, -1],
 ]
 
-export const BARB_QUAD_FLOATS = 15
+export const BARB_QUAD_FLOATS = 16
 
 function normalize3(x: number, y: number, z: number): [number, number, number] {
   const len = Math.hypot(x, y, z) || 1
@@ -246,6 +246,7 @@ export function buildBarbQuadBuffer(
         cx,
         cy,
         bin,
+        sample.hWindSpeed,
       )
     }
   }

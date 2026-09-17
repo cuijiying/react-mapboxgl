@@ -392,7 +392,7 @@ export default function LidarWindDemo() {
                 </text>
               </g>
             </svg>
-            <div className={styles.legendHint}>杆指向风的来向 · 风羽在杆左侧</div>
+            <div className={styles.legendHint}>杆指向风的来向 · 风羽在杆左侧 · 颜色随风速</div>
           </div>
         )}
       </div>

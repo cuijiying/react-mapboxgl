@@ -397,6 +397,7 @@ const BARB_VS = `
   attribute vec3 a_normal;
   attribute vec2 a_corner;
   attribute float a_bin;
+  attribute float a_speed;
 
   uniform mat4 u_matrix;
   uniform vec3 u_origin;
@@ -406,6 +407,7 @@ const BARB_VS = `
 
   varying vec2 v_uv;
   varying float v_bin;
+  varying float v_speed;
 
   void main() {
     vec3 pos = a_center + (a_right * a_corner.x + a_staff * a_corner.y) * u_halfSize;
@@ -414,6 +416,7 @@ const BARB_VS = `
     gl_Position = u_matrix * vec4(pos, 1.0);
     v_uv = vec2(a_corner.x * 0.5 + 0.5, 0.5 - a_corner.y * 0.5);
     v_bin = a_bin;
+    v_speed = a_speed;
   }
 `
 
@@ -423,17 +426,30 @@ const BARB_FS = `
   uniform sampler2D u_atlas;
   uniform float u_cols;
   uniform float u_rows;
+  uniform float u_speedMin;
+  uniform float u_speedMax;
 
   varying vec2 v_uv;
   varying float v_bin;
+  varying float v_speed;
+
+  vec3 speedColor(float t) {
+    t = clamp(t, 0.0, 1.0);
+    if (t < 0.25) return mix(vec3(0.02,0.08,0.25), vec3(0.0,0.5,0.9), t/0.25);
+    if (t < 0.5) return mix(vec3(0.0,0.5,0.9), vec3(0.0,0.95,0.7), (t-0.25)/0.25);
+    if (t < 0.75) return mix(vec3(0.0,0.95,0.7), vec3(1.0,0.85,0.1), (t-0.5)/0.25);
+    return mix(vec3(1.0,0.85,0.1), vec3(1.0,0.2,0.05), (t-0.75)/0.25);
+  }
 
   void main() {
     float col = mod(v_bin, u_cols);
     float row = floor(v_bin / u_cols);
     vec2 atlasUV = vec2((col + v_uv.x) / u_cols, (row + v_uv.y) / u_rows);
-    vec4 color = texture2D(u_atlas, atlasUV);
-    if (color.a < 0.1) discard;
-    gl_FragColor = color;
+    vec4 glyph = texture2D(u_atlas, atlasUV);
+    if (glyph.a < 0.1) discard;
+    float speedNorm = (v_speed - u_speedMin) / max(u_speedMax - u_speedMin, 0.001);
+    vec3 tint = speedColor(speedNorm);
+    gl_FragColor = vec4(tint * glyph.rgb, glyph.a);
   }
 `
 
@@ -980,6 +996,8 @@ export function createLidarWindLayer(
         gl.uniform1f(gl.getUniformLocation(barbProg, 'u_lift')!, 6 * meterScale)
         gl.uniform1f(gl.getUniformLocation(barbProg, 'u_cols')!, barbAtlasCols)
         gl.uniform1f(gl.getUniformLocation(barbProg, 'u_rows')!, barbAtlasRows)
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_speedMin')!, dataset.windSpeedMin)
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_speedMax')!, dataset.windSpeedMax)
         gl.activeTexture(gl.TEXTURE0)
         gl.bindTexture(gl.TEXTURE_2D, barbTex)
         gl.uniform1i(gl.getUniformLocation(barbProg, 'u_atlas')!, 0)
@@ -1004,6 +1022,9 @@ export function createLidarWindLayer(
         const aBin = gl.getAttribLocation(barbProg, 'a_bin')
         gl.enableVertexAttribArray(aBin)
         gl.vertexAttribPointer(aBin, 1, gl.FLOAT, false, barbStride, 56)
+        const aSpeed = gl.getAttribLocation(barbProg, 'a_speed')
+        gl.enableVertexAttribArray(aSpeed)
+        gl.vertexAttribPointer(aSpeed, 1, gl.FLOAT, false, barbStride, 60)
         gl.drawArrays(gl.TRIANGLES, 0, barbCount)
       }
 
