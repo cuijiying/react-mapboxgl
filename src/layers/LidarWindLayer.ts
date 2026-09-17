@@ -1,24 +1,24 @@
 import type { MutableRefObject } from 'react'
 import mapboxgl from 'mapbox-gl'
 import type { LidarDataset, LidarSample } from '@/utils/lidarCsvParser'
-import { polarToMercator } from '@/utils/lidarCsvParser'
-import { buildBarbInstanceBuffer, createWindBarbAtlas } from '@/utils/windBarb'
+import { polarToMercator, polarGateCellCorners } from '@/utils/lidarCsvParser'
+import { BARB_QUAD_FLOATS, buildBarbQuadBuffer, createWindBarbAtlas } from '@/utils/windBarb'
 
 export interface LidarWindLayerOptions {
   id?: string
   dataset: LidarDataset
   showPoints?: boolean
   showSurface?: boolean
-  showVectors?: boolean
   showWindBarbs?: boolean
   showScanBeam?: boolean
   showRangeRings?: boolean
   pointSize?: number
   pointOpacity?: number
   surfaceOpacity?: number
-  vectorScale?: number
+  interpolateSurface?: boolean
   barbScale?: number
   scanSpeed?: number
+  beamOpacity?: number
   heightExaggeration?: number
   colorMode?: 'speed' | 'direction'
 }
@@ -26,16 +26,16 @@ export interface LidarWindLayerOptions {
 interface LayerParams {
   showPoints: boolean
   showSurface: boolean
-  showVectors: boolean
   showWindBarbs: boolean
   showScanBeam: boolean
   showRangeRings: boolean
   pointSize: number
   pointOpacity: number
   surfaceOpacity: number
-  vectorScale: number
+  interpolateSurface: boolean
   barbScale: number
   scanSpeed: number
+  beamOpacity: number
   heightExaggeration: number
   colorMode: 'speed' | 'direction'
 }
@@ -232,17 +232,17 @@ const SURFACE_FS = `
   void main() {
     float shimmer = 0.85 + 0.15 * sin(u_time * 2.0 + v_height * 80.0);
     vec3 color = v_color * shimmer;
-    float alpha = u_opacity * (0.35 + v_height * 120.0);
+    float alpha = u_opacity;
 
     float angleDiff = wrapAngleDiff(v_azimuth, u_scanAzimuthDeg);
     if (angleDiff < u_scanTrailDeg) {
       float trail = 1.0 - angleDiff / max(u_scanTrailDeg, 0.001);
       trail = pow(trail, 1.8);
       color += vec3(0.0, 0.85, 1.0) * trail * 0.55;
-      alpha += trail * 0.25;
+      alpha = min(1.0, alpha + trail * 0.25);
     }
 
-    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.85));
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
   }
 `
 
@@ -290,26 +290,54 @@ const BEAM_FS = `
   varying float v_layer;
 
   void main() {
-    float isBeam = step(0.5, v_layer);
-    float edgeFade = 1.0 - abs(v_angularOff) / mix(18.0, 1.2, isBeam);
-    edgeFade = clamp(edgeFade, 0.0, 1.0);
-    edgeFade = pow(edgeFade, mix(1.2, 3.5, isBeam));
+    float trail = 1.0 - step(0.25, v_layer);
+    float bloom = step(0.25, v_layer) * (1.0 - step(0.75, v_layer));
+    float core = step(0.75, v_layer);
 
-    float radialFade = mix(0.35, 1.0, isBeam) * (1.0 - v_radial * 0.15);
-    float pulse = 0.65 + 0.35 * sin(u_time * 8.0);
-    float wave = sin(v_radial * 28.0 - u_time * 10.0) * 0.5 + 0.5;
-    float energyPulse = pow(wave, 3.0) * (1.0 - v_radial * 0.4);
+    float angSpan = mix(mix(32.0, 5.0, bloom), 0.72, core);
+    float ang = 1.0 - abs(v_angularOff) / max(angSpan, 0.001);
+    ang = clamp(ang, 0.0, 1.0);
+    ang = pow(ang, mix(mix(1.15, 2.4, bloom), 5.5, core));
 
-    vec3 beamColor = mix(vec3(0.0, 0.95, 1.0), vec3(0.3, 1.0, 0.55), v_radial);
-    vec3 trailColor = vec3(0.0, 0.55, 0.85);
-    vec3 color = mix(trailColor, beamColor, isBeam);
-    color += vec3(1.0) * energyPulse * isBeam * 0.45;
-    color += vec3(0.0, 1.0, 0.85) * (1.0 - abs(v_angularOff) / 1.2) * isBeam * 0.6;
+    float wake = 1.0 - smoothstep(-26.0, 1.2, v_angularOff);
+    wake = pow(clamp(wake, 0.0, 1.0), 1.4);
 
-    float alpha = edgeFade * radialFade * u_opacity;
-    alpha *= mix(0.22, 0.75, isBeam) * pulse;
-    alpha += energyPulse * isBeam * 0.2;
-    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.92));
+    float originGlow = exp(-v_radial * 7.5);
+    float radial = 1.0 - pow(v_radial, 1.35) * 0.28;
+    float t = u_time;
+
+    float chirp = sin(v_radial * 48.0 - t * 16.0) * 0.5 + 0.5;
+    chirp = pow(chirp, 5.0);
+    float packet = 1.0 - abs(fract(v_radial * 2.6 - t * 0.95) - 0.5) * 2.0;
+    packet = pow(clamp(packet, 0.0, 1.0), 12.0);
+    float gates = 1.0 - smoothstep(0.0, 0.035, abs(fract(v_radial * 14.0 - t * 0.2) - 0.5));
+    float scanline = 0.72 + 0.28 * sin(v_radial * 110.0 + t * 3.0);
+    float rail = 1.0 - smoothstep(0.0, 0.09, abs(abs(v_angularOff) - 0.38));
+    float heartbeat = 0.86 + 0.14 * sin(t * 7.5);
+
+    vec3 deep = vec3(0.0, 0.08, 0.38);
+    vec3 cyan = vec3(0.0, 0.42, 1.0);
+    vec3 ice = vec3(0.15, 0.55, 1.0);
+    vec3 mint = vec3(0.0, 0.55, 0.85);
+    vec3 hot = vec3(0.12, 0.62, 1.0);
+
+    vec3 color = mix(deep, cyan, ang);
+    color = mix(color, mint, v_radial * 0.25 * (bloom + core));
+    color += ice * originGlow * 0.85;
+    color += hot * (chirp * 0.4 + packet * 0.75) * mix(0.1, 0.85, core + bloom * 0.4);
+    color += cyan * gates * mix(0.12, 0.4, core);
+    color += ice * rail * core * 0.55;
+    color += vec3(0.05, 0.28, 0.85) * wake * trail * 0.55;
+    color *= scanline;
+
+    float alpha = ang * radial * u_opacity;
+    alpha *= mix(mix(0.72, 0.9, bloom), 1.0, core);
+    alpha *= mix(wake, 1.0, core + bloom);
+    alpha *= heartbeat;
+    alpha += packet * mix(0.12, 0.4, core);
+    alpha += originGlow * mix(0.2, 0.45, core);
+    alpha += gates * core * 0.16;
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
   }
 `
 
@@ -348,32 +376,43 @@ const BEAM_LINE_FS = `
   varying float v_t;
 
   void main() {
-    float pulse = 0.7 + 0.3 * sin(u_time * 12.0 - v_t * 40.0);
-    float head = 1.0 - smoothstep(0.92, 1.0, v_t);
-    vec3 color = mix(vec3(0.0, 0.9, 1.0), vec3(1.0), head);
-    gl_FragColor = vec4(color, (0.55 + head * 0.45) * pulse * u_opacity);
+    float dash = step(0.38, fract(v_t * 28.0 - u_time * 10.0));
+    float packet = 1.0 - abs(fract(v_t * 3.2 - u_time * 1.4) - 0.5) * 2.0;
+    packet = pow(clamp(packet, 0.0, 1.0), 8.0);
+    float tip = 1.0 - smoothstep(0.86, 1.0, v_t);
+    float root = exp(-v_t * 8.0);
+    float pulse = 0.55 + 0.45 * sin(u_time * 18.0 - v_t * 55.0);
+    vec3 color = mix(vec3(0.0, 0.32, 0.95), vec3(0.25, 0.65, 1.0), tip);
+    color += vec3(0.0, 0.45, 1.0) * packet;
+    color += vec3(0.15, 0.4, 1.0) * root * 0.5;
+    float alpha = (0.22 + dash * 0.55 + packet * 0.5 + tip * 0.55 + root * 0.3) * pulse * u_opacity;
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
   }
 `
 
 const BARB_VS = `
-  attribute vec3 a_pos;
-  attribute float a_direction;
+  attribute vec3 a_center;
+  attribute vec3 a_right;
+  attribute vec3 a_staff;
+  attribute vec3 a_normal;
+  attribute vec2 a_corner;
   attribute float a_bin;
 
   uniform mat4 u_matrix;
   uniform vec3 u_origin;
   uniform float u_heightExaggeration;
-  uniform float u_pointSize;
+  uniform float u_halfSize;
+  uniform float u_lift;
 
-  varying float v_dir;
+  varying vec2 v_uv;
   varying float v_bin;
 
   void main() {
-    vec3 pos = a_pos;
-    pos.z = u_origin.z + (a_pos.z - u_origin.z) * u_heightExaggeration + 0.000003;
+    vec3 pos = a_center + (a_right * a_corner.x + a_staff * a_corner.y) * u_halfSize;
+    pos += a_normal * u_lift;
+    pos.z = u_origin.z + (pos.z - u_origin.z) * u_heightExaggeration;
     gl_Position = u_matrix * vec4(pos, 1.0);
-    gl_PointSize = u_pointSize;
-    v_dir = a_direction;
+    v_uv = vec2(a_corner.x * 0.5 + 0.5, 0.5 - a_corner.y * 0.5);
     v_bin = a_bin;
   }
 `
@@ -382,25 +421,16 @@ const BARB_FS = `
   precision highp float;
 
   uniform sampler2D u_atlas;
-  uniform float u_bearing;
   uniform float u_cols;
   uniform float u_rows;
 
-  varying float v_dir;
+  varying vec2 v_uv;
   varying float v_bin;
 
   void main() {
-    float rad = radians(v_dir - u_bearing);
-    float c = cos(-rad);
-    float s = sin(-rad);
-    vec2 p = gl_PointCoord * 2.0 - 1.0;
-    vec2 r = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
-    vec2 local = r * 0.5 + 0.5;
-    if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) discard;
-
     float col = mod(v_bin, u_cols);
     float row = floor(v_bin / u_cols);
-    vec2 atlasUV = vec2((col + local.x) / u_cols, (row + local.y) / u_rows);
+    vec2 atlasUV = vec2((col + v_uv.x) / u_cols, (row + v_uv.y) / u_rows);
     vec4 color = texture2D(u_atlas, atlasUV);
     if (color.a < 0.1) discard;
     gl_FragColor = color;
@@ -421,8 +451,11 @@ function buildPointBuffer(samples: LidarSample[]) {
   return data
 }
 
-function buildSurfaceMesh(dataset: LidarDataset): { vertices: Float32Array; indices: Uint32Array } {
-  const { samples, azimuths } = dataset
+function buildSurfaceMesh(
+  dataset: LidarDataset,
+  interpolate: boolean,
+): { vertices: Float32Array; indices: Uint32Array } {
+  const { samples, azimuths, metadata } = dataset
   const byAzimuth = new Map<number, LidarSample[]>()
   for (const s of samples) {
     if (!byAzimuth.has(s.azimuth)) byAzimuth.set(s.azimuth, [])
@@ -434,14 +467,43 @@ function buildSurfaceMesh(dataset: LidarDataset): { vertices: Float32Array; indi
 
   const vertices: number[] = []
   const indices: number[] = []
-  const indexMap = new Map<string, number>()
 
-  function addVertex(s: LidarSample): number {
+  function pushVertex(
+    x: number,
+    y: number,
+    z: number,
+    speed: number,
+    azimuth: number,
+  ): number {
+    const idx = vertices.length / 5
+    vertices.push(x, y, z, speed, azimuth)
+    return idx
+  }
+
+  // 离散：每个探测点是距离门格心，四边形覆盖该格子，四顶点同值
+  // 插值：只在相邻格心之间连网，GPU 做线性过渡
+  if (!interpolate) {
+    for (const s of samples) {
+      if (s.hWindSpeed === null) continue
+      const [a, b, c, d] = polarGateCellCorners(metadata, s.azimuth, s.pitch, s.distance)
+      const i0 = pushVertex(a[0], a[1], a[2], s.hWindSpeed, s.azimuth)
+      const i1 = pushVertex(b[0], b[1], b[2], s.hWindSpeed, s.azimuth)
+      const i2 = pushVertex(c[0], c[1], c[2], s.hWindSpeed, s.azimuth)
+      const i3 = pushVertex(d[0], d[1], d[2], s.hWindSpeed, s.azimuth)
+      indices.push(i0, i2, i1, i1, i2, i3)
+    }
+    return {
+      vertices: new Float32Array(vertices),
+      indices: new Uint32Array(indices),
+    }
+  }
+
+  const indexMap = new Map<string, number>()
+  function addCenterVertex(s: LidarSample): number {
     const key = `${s.azimuth}_${s.distance}`
     const existing = indexMap.get(key)
     if (existing !== undefined) return existing
-    const idx = vertices.length / 5
-    vertices.push(s.x, s.y, s.z, s.hWindSpeed ?? 0, s.azimuth)
+    const idx = pushVertex(s.x, s.y, s.z, s.hWindSpeed ?? 0, s.azimuth)
     indexMap.set(key, idx)
     return idx
   }
@@ -458,13 +520,18 @@ function buildSurfaceMesh(dataset: LidarDataset): { vertices: Float32Array; indi
       const b = ray0[di + 1]!
       const c = ray1[di]!
       const d = ray1[di + 1]!
-      if (a.hWindSpeed === null && b.hWindSpeed === null && c.hWindSpeed === null && d.hWindSpeed === null) {
+      if (
+        a.hWindSpeed === null ||
+        b.hWindSpeed === null ||
+        c.hWindSpeed === null ||
+        d.hWindSpeed === null
+      ) {
         continue
       }
-      const i0 = addVertex(a)
-      const i1 = addVertex(b)
-      const i2 = addVertex(c)
-      const i3 = addVertex(d)
+      const i0 = addCenterVertex(a)
+      const i1 = addCenterVertex(b)
+      const i2 = addCenterVertex(c)
+      const i3 = addCenterVertex(d)
       indices.push(i0, i2, i1, i1, i2, i3)
     }
   }
@@ -475,66 +542,54 @@ function buildSurfaceMesh(dataset: LidarDataset): { vertices: Float32Array; indi
   }
 }
 
-function buildVectorLines(samples: LidarSample[]): Float32Array {
-  const lines: number[] = []
-  const step = Math.max(1, Math.floor(samples.length / 800))
-  const m = mapboxgl.MercatorCoordinate.fromLngLat([0, 0], 1).meterInMercatorCoordinateUnits()
-  const baseScale = 800
-
-  for (let i = 0; i < samples.length; i += step) {
-    const s = samples[i]!
-    if (s.hWindSpeed === null || s.hWindDirection === null) continue
-
-    const dirRad = (s.hWindDirection * Math.PI) / 180
-    const arrowLen = s.hWindSpeed * baseScale
-    const dx = Math.sin(dirRad) * arrowLen * m
-    const dy = -Math.cos(dirRad) * arrowLen * m
-    const dz = 0.002
-
-    lines.push(s.x, s.y, s.z, dx, dy, dz)
-
-    const headLen = arrowLen * 0.25 * m
-    const headAngle = 0.5
-    const hx = Math.sin(dirRad)
-    const hy = -Math.cos(dirRad)
-    const tipX = s.x + dx
-    const tipY = s.y + dy
-    const tipZ = s.z + dz
-
-    for (const sign of [-1, 1]) {
-      const lx = hx * Math.cos(headAngle) - sign * hy * Math.sin(headAngle)
-      const ly = hx * Math.sin(headAngle) + sign * hy * Math.cos(headAngle)
-      lines.push(tipX, tipY, tipZ, -lx * headLen, -ly * headLen, 0)
-    }
-  }
-
-  return new Float32Array(lines)
-}
-
-function buildRangeRings(
-  lng: number,
-  lat: number,
-  alt: number,
-  maxDist: number,
-  ringCount: number,
-): Float32Array {
+function buildRangeRings(dataset: LidarDataset): Float32Array {
+  const { metadata, maxValidDistance } = dataset
+  const { longitude, latitude, seaHeight, fixAngle, rangeResolution } = metadata
+  const halfRange = rangeResolution / 2
   const segments: number[] = []
-  const origin = mapboxgl.MercatorCoordinate.fromLngLat([lng, lat], alt)
-  const m = origin.meterInMercatorCoordinateUnits()
 
-  for (let r = 1; r <= ringCount; r++) {
-    const radius = (maxDist / ringCount) * r
-    const segs = 72
-    for (let i = 0; i < segs; i++) {
-      const a0 = (i / segs) * Math.PI * 2
-      const a1 = ((i + 1) / segs) * Math.PI * 2
-      const x0 = origin.x + Math.sin(a0) * radius * m
-      const y0 = origin.y - Math.cos(a0) * radius * m
-      const x1 = origin.x + Math.sin(a1) * radius * m
-      const y1 = origin.y - Math.cos(a1) * radius * m
-      segments.push(x0, y0, origin.z, x1 - x0, y1 - y0, 0)
+  if (maxValidDistance <= 0) return new Float32Array()
+
+  const outer = maxValidDistance + halfRange
+  const ringStep = outer > 1800 ? 500 : 250
+  const liftAlt = seaHeight + 4
+  const dashM = 80
+  const gapM = 55
+
+  const pointAt = (az: number, dist: number) =>
+    polarToMercator(longitude, latitude, liftAlt, az, fixAngle, dist)
+
+  const pushLine = (
+    a: [number, number, number],
+    b: [number, number, number],
+  ) => {
+    segments.push(a[0], a[1], a[2], 0, 0, 0)
+    segments.push(a[0], a[1], a[2], b[0] - a[0], b[1] - a[1], b[2] - a[2])
+  }
+
+  const pushDashedRing = (dist: number) => {
+    const cycle = dashM + gapM
+    const circ = 2 * Math.PI * dist
+    let s = 0
+    while (s < circ - 1) {
+      const dashEnd = Math.min(s + dashM, circ)
+      const az0 = (s / dist) * (180 / Math.PI)
+      const az1 = (dashEnd / dist) * (180 / Math.PI)
+      const span = az1 - az0
+      const parts = Math.max(1, Math.ceil(span / 6))
+      for (let i = 0; i < parts; i++) {
+        const a0 = az0 + (span * i) / parts
+        const a1 = az0 + (span * (i + 1)) / parts
+        pushLine(pointAt(a0, dist), pointAt(a1, dist))
+      }
+      s += cycle
     }
   }
+
+  for (let dist = ringStep; dist < outer - 1; dist += ringStep) {
+    pushDashedRing(dist)
+  }
+  pushDashedRing(outer)
 
   return new Float32Array(segments)
 }
@@ -543,7 +598,7 @@ function buildPpiScanMeshes(): {
   wedge: { vertices: Float32Array; indices: Uint16Array }
   beamLine: Float32Array
 } {
-  const R_SEGS = 32
+  const R_SEGS = 48
   const vertices: number[] = []
   const indices: number[] = []
 
@@ -575,12 +630,14 @@ function buildPpiScanMeshes(): {
     }
   }
 
-  // 扫描拖尾扇面（波束后方）
-  addWedge(0, 1, -22, 0, 0, R_SEGS, 14)
-  // 主波束窄扇面（从中心射出）
-  addWedge(0, 1, -0.8, 0.8, 1, R_SEGS, 4)
+  // 宽幅余辉
+  addWedge(0, 1, -30, 2.4, 0, R_SEGS, 20)
+  // 中层光晕
+  addWedge(0, 1, -3.6, 1.4, 0.5, R_SEGS, 10)
+  // 核心激光扇
+  addWedge(0, 1, -0.5, 0.5, 1, R_SEGS, 6)
 
-  const lineSegs = 48
+  const lineSegs = 72
   const lineVerts: number[] = [0, 0, 1]
   for (let i = 1; i <= lineSegs; i++) {
     lineVerts.push(i / lineSegs, 0, 1)
@@ -625,11 +682,12 @@ export function createLidarWindLayer(
 
   let pointVB: WebGLBuffer | null = null
   let pointCount = 0
-  let surfaceVB: WebGLBuffer | null = null
-  let surfaceIB: WebGLBuffer | null = null
-  let surfaceIndexCount = 0
-  let vectorVB: WebGLBuffer | null = null
-  let vectorCount = 0
+  let surfaceInterpVB: WebGLBuffer | null = null
+  let surfaceInterpIB: WebGLBuffer | null = null
+  let surfaceInterpIndexCount = 0
+  let surfaceFlatVB: WebGLBuffer | null = null
+  let surfaceFlatIB: WebGLBuffer | null = null
+  let surfaceFlatIndexCount = 0
   let ringVB: WebGLBuffer | null = null
   let ringCount = 0
   let beamVB: WebGLBuffer | null = null
@@ -655,7 +713,7 @@ export function createLidarWindLayer(
     gl.uniform1f(gl.getUniformLocation(prog, 'u_pitchRad')!, pitchRad)
     gl.uniform3f(gl.getUniformLocation(prog, 'u_origin')!, origin[0], origin[1], origin[2])
     gl.uniform1f(gl.getUniformLocation(prog, 'u_meterScale')!, meterScale)
-    gl.uniform1f(gl.getUniformLocation(prog, 'u_maxDistMeters')!, dataset.maxDistance)
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_maxDistMeters')!, dataset.maxValidDistance + metadata.rangeResolution / 2)
     gl.uniform1f(gl.getUniformLocation(prog, 'u_heightExaggeration')!, heightExaggeration)
   }
 
@@ -667,34 +725,31 @@ export function createLidarWindLayer(
     onAdd(_map, gl) {
       startTime = performance.now()
 
-      const pointData = buildPointBuffer(dataset.samples)
-      pointCount = dataset.samples.length
+      const pointData = buildPointBuffer(dataset.validSamples)
+      pointCount = dataset.validSamples.length
       pointVB = gl.createBuffer()
       gl.bindBuffer(gl.ARRAY_BUFFER, pointVB)
       gl.bufferData(gl.ARRAY_BUFFER, pointData, gl.STATIC_DRAW)
 
-      const mesh = buildSurfaceMesh(dataset)
-      surfaceVB = gl.createBuffer()
-      gl.bindBuffer(gl.ARRAY_BUFFER, surfaceVB)
-      gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.STATIC_DRAW)
-      surfaceIB = gl.createBuffer()
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, surfaceIB)
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW)
-      surfaceIndexCount = mesh.indices.length
+      const interpMesh = buildSurfaceMesh(dataset, true)
+      surfaceInterpVB = gl.createBuffer()
+      gl.bindBuffer(gl.ARRAY_BUFFER, surfaceInterpVB)
+      gl.bufferData(gl.ARRAY_BUFFER, interpMesh.vertices, gl.STATIC_DRAW)
+      surfaceInterpIB = gl.createBuffer()
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, surfaceInterpIB)
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, interpMesh.indices, gl.STATIC_DRAW)
+      surfaceInterpIndexCount = interpMesh.indices.length
 
-      const vectorData = buildVectorLines(dataset.validSamples)
-      vectorCount = vectorData.length / 6
-      vectorVB = gl.createBuffer()
-      gl.bindBuffer(gl.ARRAY_BUFFER, vectorVB)
-      gl.bufferData(gl.ARRAY_BUFFER, vectorData, gl.STATIC_DRAW)
+      const flatMesh = buildSurfaceMesh(dataset, false)
+      surfaceFlatVB = gl.createBuffer()
+      gl.bindBuffer(gl.ARRAY_BUFFER, surfaceFlatVB)
+      gl.bufferData(gl.ARRAY_BUFFER, flatMesh.vertices, gl.STATIC_DRAW)
+      surfaceFlatIB = gl.createBuffer()
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, surfaceFlatIB)
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, flatMesh.indices, gl.STATIC_DRAW)
+      surfaceFlatIndexCount = flatMesh.indices.length
 
-      const ringData = buildRangeRings(
-        metadata.longitude,
-        metadata.latitude,
-        metadata.seaHeight,
-        dataset.maxDistance,
-        6,
-      )
+      const ringData = buildRangeRings(dataset)
       ringCount = ringData.length / 6
       ringVB = gl.createBuffer()
       gl.bindBuffer(gl.ARRAY_BUFFER, ringVB)
@@ -734,8 +789,8 @@ export function createLidarWindLayer(
       const blfs = compileShader(gl, gl.FRAGMENT_SHADER, BEAM_LINE_FS)
       if (blvs && blfs) beamLineProg = linkProgram(gl, blvs, blfs)
 
-      const barbData = buildBarbInstanceBuffer(dataset)
-      barbCount = barbData.length / 5
+      const barbData = buildBarbQuadBuffer(dataset, origin)
+      barbCount = barbData.length / BARB_QUAD_FLOATS
       barbVB = gl.createBuffer()
       gl.bindBuffer(gl.ARRAY_BUFFER, barbVB)
       gl.bufferData(gl.ARRAY_BUFFER, barbData, gl.STATIC_DRAW)
@@ -801,37 +856,46 @@ export function createLidarWindLayer(
         gl.drawArrays(gl.LINES, 0, count)
       }
 
-      if (params.showRangeRings) {
-        drawLines(ringVB, ringCount, [0.0, 0.85, 1.0, 0.35], 1, 24, true)
+      if (params.showSurface && surfaceProg) {
+        const surfaceVB = params.interpolateSurface ? surfaceInterpVB : surfaceFlatVB
+        const surfaceIB = params.interpolateSurface ? surfaceInterpIB : surfaceFlatIB
+        const surfaceIndexCount = params.interpolateSurface
+          ? surfaceInterpIndexCount
+          : surfaceFlatIndexCount
+        if (surfaceVB && surfaceIB) {
+          gl.useProgram(surfaceProg)
+          gl.uniformMatrix4fv(gl.getUniformLocation(surfaceProg, 'u_matrix')!, false, matrix)
+          gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_speedMin')!, dataset.windSpeedMin)
+          gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_speedMax')!, dataset.windSpeedMax)
+          gl.uniform3f(gl.getUniformLocation(surfaceProg, 'u_origin')!, origin[0], origin[1], origin[2])
+          gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_heightExaggeration')!, params.heightExaggeration)
+          gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_opacity')!, params.surfaceOpacity)
+          gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_time')!, time)
+          gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_scanAzimuthDeg')!, scanAzimuthDeg)
+          gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_scanTrailDeg')!, 25)
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, surfaceVB)
+          const surfStride = 20
+          const aPos = gl.getAttribLocation(surfaceProg, 'a_pos')
+          gl.enableVertexAttribArray(aPos)
+          gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, surfStride, 0)
+          const aSpeed = gl.getAttribLocation(surfaceProg, 'a_speed')
+          gl.enableVertexAttribArray(aSpeed)
+          gl.vertexAttribPointer(aSpeed, 1, gl.FLOAT, false, surfStride, 12)
+          const aAz = gl.getAttribLocation(surfaceProg, 'a_azimuth')
+          gl.enableVertexAttribArray(aAz)
+          gl.vertexAttribPointer(aAz, 1, gl.FLOAT, false, surfStride, 16)
+
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, surfaceIB)
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+          gl.drawElements(gl.TRIANGLES, surfaceIndexCount, gl.UNSIGNED_INT, 0)
+        }
       }
 
-      if (params.showSurface && surfaceProg && surfaceVB && surfaceIB) {
-        gl.useProgram(surfaceProg)
-        gl.uniformMatrix4fv(gl.getUniformLocation(surfaceProg, 'u_matrix')!, false, matrix)
-        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_speedMin')!, dataset.windSpeedMin)
-        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_speedMax')!, dataset.windSpeedMax)
-        gl.uniform3f(gl.getUniformLocation(surfaceProg, 'u_origin')!, origin[0], origin[1], origin[2])
-        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_heightExaggeration')!, params.heightExaggeration)
-        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_opacity')!, params.surfaceOpacity)
-        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_time')!, time)
-        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_scanAzimuthDeg')!, scanAzimuthDeg)
-        gl.uniform1f(gl.getUniformLocation(surfaceProg, 'u_scanTrailDeg')!, 25)
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, surfaceVB)
-        const surfStride = 20
-        const aPos = gl.getAttribLocation(surfaceProg, 'a_pos')
-        gl.enableVertexAttribArray(aPos)
-        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, surfStride, 0)
-        const aSpeed = gl.getAttribLocation(surfaceProg, 'a_speed')
-        gl.enableVertexAttribArray(aSpeed)
-        gl.vertexAttribPointer(aSpeed, 1, gl.FLOAT, false, surfStride, 12)
-        const aAz = gl.getAttribLocation(surfaceProg, 'a_azimuth')
-        gl.enableVertexAttribArray(aAz)
-        gl.vertexAttribPointer(aAz, 1, gl.FLOAT, false, surfStride, 16)
-
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, surfaceIB)
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-        gl.drawElements(gl.TRIANGLES, surfaceIndexCount, gl.UNSIGNED_INT, 0)
+      if (params.showRangeRings) {
+        gl.depthMask(false)
+        drawLines(ringVB, ringCount, [0.0, 0.9, 1.0, 0.7], 1, 24, true)
+        gl.depthMask(true)
       }
 
       if (params.showScanBeam && beamProg && beamVB && beamIB) {
@@ -842,7 +906,7 @@ export function createLidarWindLayer(
         gl.useProgram(beamProg)
         gl.uniformMatrix4fv(gl.getUniformLocation(beamProg, 'u_matrix')!, false, matrix)
         setBeamUniforms(gl, beamProg, scanAngleRad, params.heightExaggeration)
-        gl.uniform1f(gl.getUniformLocation(beamProg, 'u_opacity')!, 0.65)
+        gl.uniform1f(gl.getUniformLocation(beamProg, 'u_opacity')!, params.beamOpacity)
         gl.uniform1f(gl.getUniformLocation(beamProg, 'u_time')!, time)
 
         gl.bindBuffer(gl.ARRAY_BUFFER, beamVB)
@@ -856,7 +920,7 @@ export function createLidarWindLayer(
           gl.useProgram(beamLineProg)
           gl.uniformMatrix4fv(gl.getUniformLocation(beamLineProg, 'u_matrix')!, false, matrix)
           setBeamUniforms(gl, beamLineProg, scanAngleRad, params.heightExaggeration)
-          gl.uniform1f(gl.getUniformLocation(beamLineProg, 'u_opacity')!, 0.9)
+          gl.uniform1f(gl.getUniformLocation(beamLineProg, 'u_opacity')!, params.beamOpacity)
           gl.uniform1f(gl.getUniformLocation(beamLineProg, 'u_time')!, time)
           gl.bindBuffer(gl.ARRAY_BUFFER, beamLineVB)
           const aLine = gl.getAttribLocation(beamLineProg, 'a_attr')
@@ -867,10 +931,6 @@ export function createLidarWindLayer(
 
         gl.depthMask(true)
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-      }
-
-      if (params.showVectors) {
-        drawLines(vectorVB, vectorCount, [0.2, 1.0, 0.7, 0.75], params.vectorScale, 24, true)
       }
 
       if (params.showPoints && pointProg && pointVB) {
@@ -905,17 +965,19 @@ export function createLidarWindLayer(
       }
 
       if (params.showWindBarbs && barbProg && barbVB && barbTex) {
+        const zoom = mapRef.current?.getZoom() ?? 11.5
+        const worldSize = 512 * 2 ** zoom
+        const metersPerPixel =
+          (40075016.686 * Math.cos((metadata.latitude * Math.PI) / 180)) / worldSize
+        const halfSizeMeters = 22 * params.barbScale * metersPerPixel
+
         gl.useProgram(barbProg)
-        gl.depthMask(false)
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
         gl.uniformMatrix4fv(gl.getUniformLocation(barbProg, 'u_matrix')!, false, matrix)
         gl.uniform3f(gl.getUniformLocation(barbProg, 'u_origin')!, origin[0], origin[1], origin[2])
         gl.uniform1f(gl.getUniformLocation(barbProg, 'u_heightExaggeration')!, params.heightExaggeration)
-        gl.uniform1f(
-          gl.getUniformLocation(barbProg, 'u_pointSize')!,
-          Math.min(96, 44 * params.barbScale * (window.devicePixelRatio || 1)),
-        )
-        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_bearing')!, mapRef.current?.getBearing() ?? 0)
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_halfSize')!, halfSizeMeters * meterScale)
+        gl.uniform1f(gl.getUniformLocation(barbProg, 'u_lift')!, 6 * meterScale)
         gl.uniform1f(gl.getUniformLocation(barbProg, 'u_cols')!, barbAtlasCols)
         gl.uniform1f(gl.getUniformLocation(barbProg, 'u_rows')!, barbAtlasRows)
         gl.activeTexture(gl.TEXTURE0)
@@ -923,25 +985,33 @@ export function createLidarWindLayer(
         gl.uniform1i(gl.getUniformLocation(barbProg, 'u_atlas')!, 0)
 
         gl.bindBuffer(gl.ARRAY_BUFFER, barbVB)
-        const barbStride = 20
-        const aPos = gl.getAttribLocation(barbProg, 'a_pos')
-        gl.enableVertexAttribArray(aPos)
-        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, barbStride, 0)
-        const aDir = gl.getAttribLocation(barbProg, 'a_direction')
-        gl.enableVertexAttribArray(aDir)
-        gl.vertexAttribPointer(aDir, 1, gl.FLOAT, false, barbStride, 12)
+        const barbStride = BARB_QUAD_FLOATS * 4
+        const aCenter = gl.getAttribLocation(barbProg, 'a_center')
+        gl.enableVertexAttribArray(aCenter)
+        gl.vertexAttribPointer(aCenter, 3, gl.FLOAT, false, barbStride, 0)
+        const aRight = gl.getAttribLocation(barbProg, 'a_right')
+        gl.enableVertexAttribArray(aRight)
+        gl.vertexAttribPointer(aRight, 3, gl.FLOAT, false, barbStride, 12)
+        const aStaff = gl.getAttribLocation(barbProg, 'a_staff')
+        gl.enableVertexAttribArray(aStaff)
+        gl.vertexAttribPointer(aStaff, 3, gl.FLOAT, false, barbStride, 24)
+        const aNormal = gl.getAttribLocation(barbProg, 'a_normal')
+        gl.enableVertexAttribArray(aNormal)
+        gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, barbStride, 36)
+        const aCorner = gl.getAttribLocation(barbProg, 'a_corner')
+        gl.enableVertexAttribArray(aCorner)
+        gl.vertexAttribPointer(aCorner, 2, gl.FLOAT, false, barbStride, 48)
         const aBin = gl.getAttribLocation(barbProg, 'a_bin')
         gl.enableVertexAttribArray(aBin)
-        gl.vertexAttribPointer(aBin, 1, gl.FLOAT, false, barbStride, 16)
-        gl.drawArrays(gl.POINTS, 0, barbCount)
-        gl.depthMask(true)
+        gl.vertexAttribPointer(aBin, 1, gl.FLOAT, false, barbStride, 56)
+        gl.drawArrays(gl.TRIANGLES, 0, barbCount)
       }
 
       mapRef.current?.triggerRepaint()
     },
 
     onRemove(_map, gl) {
-      for (const buf of [pointVB, surfaceVB, surfaceIB, vectorVB, ringVB, beamVB, beamIB, beamLineVB, barbVB]) {
+      for (const buf of [pointVB, surfaceInterpVB, surfaceInterpIB, surfaceFlatVB, surfaceFlatIB, ringVB, beamVB, beamIB, beamLineVB, barbVB]) {
         if (buf) gl.deleteBuffer(buf)
       }
       if (barbTex) gl.deleteTexture(barbTex)

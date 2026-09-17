@@ -33,12 +33,17 @@ function bearingDeg(lng1: number, lat1: number, lng2: number, lat2: number): num
   return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360
 }
 
-function snapToNearest(values: number[], target: number): number {
+function circularAzDiff(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360
+  return Math.min(d, 360 - d)
+}
+
+function snapToNearestAzimuth(values: number[], target: number): number {
   if (values.length === 0) return target
   let nearest = values[0]!
-  let minDiff = Math.abs(target - nearest)
+  let minDiff = circularAzDiff(target, nearest)
   for (const v of values) {
-    const diff = Math.abs(target - v)
+    const diff = circularAzDiff(target, v)
     if (diff < minDiff) {
       minDiff = diff
       nearest = v
@@ -61,26 +66,41 @@ export function buildLidarSampleIndex(dataset: LidarDataset): Map<string, LidarS
   return index
 }
 
+/** 按距离门格子命中：探测点为格心，值代表整个格子 */
 export function queryLidarAtLngLat(
   dataset: LidarDataset,
   index: Map<string, LidarSample>,
   lng: number,
   lat: number,
 ): LidarHoverInfo | null {
-  const { metadata, azimuths, maxDistance } = dataset
-  const { longitude, latitude, startRange, rangeResolution } = metadata
+  const { metadata, azimuths, maxValidDistance, minValidDistance } = dataset
+  const { longitude, latitude, startRange, rangeResolution, azimuthStep, fixAngle } = metadata
 
   const groundDistance = haversineMeters(longitude, latitude, lng, lat)
-  if (groundDistance > maxDistance * 1.05 || groundDistance < startRange * 0.5) {
+  const pitchRad = (fixAngle * Math.PI) / 180
+  const slantRange = groundDistance / Math.max(Math.cos(pitchRad), 1e-6)
+
+  const halfRange = rangeResolution / 2
+  const halfAz = azimuthStep / 2
+  const inner = Math.max(0, minValidDistance - halfRange)
+  const outer = maxValidDistance + halfRange
+  if (slantRange < inner || slantRange > outer) {
     return null
   }
 
   const azimuth = bearingDeg(longitude, latitude, lng, lat)
-  const snappedAz = snapToNearest(azimuths, azimuth)
+  const snappedAz = snapToNearestAzimuth(azimuths, azimuth)
+  if (circularAzDiff(azimuth, snappedAz) > halfAz + 1e-6) {
+    return null
+  }
 
-  const gateIndex = Math.round((groundDistance - startRange) / rangeResolution)
+  const gateIndex = Math.round((slantRange - startRange) / rangeResolution)
   const snappedDist = startRange + gateIndex * rangeResolution
-  if (snappedDist < startRange || snappedDist > maxDistance) {
+  if (
+    Math.abs(slantRange - snappedDist) > halfRange + 1e-6 ||
+    snappedDist < minValidDistance - 1e-6 ||
+    snappedDist > maxValidDistance + 1e-6
+  ) {
     return null
   }
 

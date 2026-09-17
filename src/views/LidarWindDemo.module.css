@@ -271,6 +271,10 @@
   accent-color: #00f0ff;
 }
 
+.checkRow input:disabled {
+  opacity: 0.4;
+}
+
 .modeRow {
   display: flex;
   gap: 8px;

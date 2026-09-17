@@ -53,8 +53,8 @@ function paintBarb(
   const cx = size / 2
   const cy = size / 2
   const staffLen = size * 0.38
-  const barbLen = size * 0.3
-  const staffWidth = Math.max(2.2, size * 0.038) * widthScale
+  const barbLen = size * 0.16
+  const staffWidth = Math.max(1.15, size * 0.02) * widthScale
   const tipY = cy - staffLen
   const { flags, longBarbs, shortBarbs } = decomposeWindSpeed(speedMps)
 
@@ -64,14 +64,9 @@ function paintBarb(
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
 
-  ctx.beginPath()
-  ctx.arc(cx, cy, size * 0.05 * widthScale, 0, Math.PI * 2)
-  if (fill) ctx.fill()
-  else ctx.stroke()
-
   if (speedToBin(speedMps) === 0) {
     ctx.beginPath()
-    ctx.arc(cx, cy, size * 0.1 * widthScale, 0, Math.PI * 2)
+    ctx.arc(cx, cy, size * 0.072 * widthScale, 0, Math.PI * 2)
     ctx.stroke()
     return
   }
@@ -132,14 +127,14 @@ export function drawWindBarb(
   ctx.clearRect(0, 0, size, size)
   ctx.save()
 
-  ctx.shadowColor = 'rgba(0, 80, 255, 0.55)'
-  ctx.shadowBlur = size * 0.08
-  paintBarb(ctx, speedMps, size, BARB_BLUE, 1.15)
+  ctx.shadowColor = 'rgba(0, 80, 255, 0.4)'
+  ctx.shadowBlur = size * 0.045
+  paintBarb(ctx, speedMps, size, BARB_BLUE, 1.05)
   ctx.shadowBlur = 0
 
-  paintBarb(ctx, speedMps, size, BARB_OUTLINE, 1.55, false)
-  paintBarb(ctx, speedMps, size, BARB_BLUE, 1.05)
-  paintBarb(ctx, speedMps, size, BARB_BLUE_BRIGHT, 0.55, false)
+  paintBarb(ctx, speedMps, size, BARB_OUTLINE, 1.25, false)
+  paintBarb(ctx, speedMps, size, BARB_BLUE, 0.95)
+  paintBarb(ctx, speedMps, size, BARB_BLUE_BRIGHT, 0.45, false)
 
   ctx.restore()
 }
@@ -172,8 +167,26 @@ export function createWindBarbAtlas(): {
   return { canvas, cols, rows, cell }
 }
 
-export function buildBarbInstanceBuffer(
+const BARB_QUAD_CORNERS: Array<[number, number]> = [
+  [-1, 1],
+  [-1, -1],
+  [1, 1],
+  [1, 1],
+  [-1, -1],
+  [1, -1],
+]
+
+export const BARB_QUAD_FLOATS = 15
+
+function normalize3(x: number, y: number, z: number): [number, number, number] {
+  const len = Math.hypot(x, y, z) || 1
+  return [x / len, y / len, z / len]
+}
+
+/** 贴在 PPI 切平面上的风杆四边形：center / right / staff / normal / corner / bin */
+export function buildBarbQuadBuffer(
   dataset: LidarDataset,
+  origin: readonly [number, number, number],
   options: { azimuthStride?: number; distanceStride?: number } = {},
 ): Float32Array {
   const azimuthStride = options.azimuthStride ?? 1
@@ -188,13 +201,53 @@ export function buildBarbInstanceBuffer(
     if (gate % distanceStride !== 0) continue
     if (sample.hWindDirection === null || sample.hWindSpeed === null) continue
 
-    data.push(
-      sample.x,
-      sample.y,
-      sample.z,
-      sample.hWindDirection,
-      speedToAtlasIndex(sample.hWindSpeed),
+    const radial = normalize3(
+      sample.x - origin[0],
+      sample.y - origin[1],
+      sample.z - origin[2],
     )
+    const azim = normalize3(-radial[1], radial[0], 0)
+    const normal = normalize3(
+      radial[1] * azim[2] - radial[2] * azim[1],
+      radial[2] * azim[0] - radial[0] * azim[2],
+      radial[0] * azim[1] - radial[1] * azim[0],
+    )
+
+    const dirRad = (sample.hWindDirection * Math.PI) / 180
+    let fx = Math.sin(dirRad)
+    let fy = -Math.cos(dirRad)
+    let fz = 0
+    const alongNormal = fx * normal[0] + fy * normal[1] + fz * normal[2]
+    fx -= alongNormal * normal[0]
+    fy -= alongNormal * normal[1]
+    fz -= alongNormal * normal[2]
+    const staff = normalize3(fx, fy, fz)
+    const right = normalize3(
+      staff[1] * normal[2] - staff[2] * normal[1],
+      staff[2] * normal[0] - staff[0] * normal[2],
+      staff[0] * normal[1] - staff[1] * normal[0],
+    )
+    const bin = speedToAtlasIndex(sample.hWindSpeed)
+
+    for (const [cx, cy] of BARB_QUAD_CORNERS) {
+      data.push(
+        sample.x,
+        sample.y,
+        sample.z,
+        right[0],
+        right[1],
+        right[2],
+        staff[0],
+        staff[1],
+        staff[2],
+        normal[0],
+        normal[1],
+        normal[2],
+        cx,
+        cy,
+        bin,
+      )
+    }
   }
 
   return new Float32Array(data)

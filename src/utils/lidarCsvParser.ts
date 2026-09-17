@@ -39,6 +39,8 @@ export interface LidarDataset {
   validSamples: LidarSample[]
   azimuths: number[]
   maxDistance: number
+  minValidDistance: number
+  maxValidDistance: number
   windSpeedMin: number
   windSpeedMax: number
 }
@@ -97,6 +99,31 @@ export function polarToMercator(
   return [origin.x + east * m, origin.y - north * m, origin.z + up * m]
 }
 
+/** PPI 距离门格子：探测点为中心，覆盖 ±半个方位步长、±半个距离分辨率 */
+export function polarGateCellCorners(
+  metadata: LidarMetadata,
+  azimuth: number,
+  pitch: number,
+  distance: number,
+): [
+  [number, number, number],
+  [number, number, number],
+  [number, number, number],
+  [number, number, number],
+] {
+  const halfAz = metadata.azimuthStep / 2
+  const halfRange = metadata.rangeResolution / 2
+  const az0 = azimuth - halfAz
+  const az1 = azimuth + halfAz
+  const r0 = Math.max(0, distance - halfRange)
+  const r1 = distance + halfRange
+
+  const corner = (az: number, range: number) =>
+    polarToMercator(metadata.longitude, metadata.latitude, metadata.seaHeight, az, pitch, range)
+
+  return [corner(az0, r0), corner(az0, r1), corner(az1, r0), corner(az1, r1)]
+}
+
 export function parseLidarCsv(text: string): LidarDataset {
   const lines = text.trim().split(/\r?\n/)
   const metadata = parseHeaderLine(lines[0] ?? '')
@@ -105,6 +132,8 @@ export function parseLidarCsv(text: string): LidarDataset {
   const validSamples: LidarSample[] = []
   const azimuthSet = new Set<number>()
   let maxDistance = 0
+  let minValidDistance = Infinity
+  let maxValidDistance = 0
   let windSpeedMin = Infinity
   let windSpeedMax = -Infinity
 
@@ -149,6 +178,8 @@ export function parseLidarCsv(text: string): LidarDataset {
 
     if (hWindSpeed !== null) {
       validSamples.push(sample)
+      minValidDistance = Math.min(minValidDistance, distance)
+      maxValidDistance = Math.max(maxValidDistance, distance)
       windSpeedMin = Math.min(windSpeedMin, hWindSpeed)
       windSpeedMax = Math.max(windSpeedMax, hWindSpeed)
     }
@@ -158,6 +189,10 @@ export function parseLidarCsv(text: string): LidarDataset {
     windSpeedMin = 0
     windSpeedMax = 5
   }
+  if (!Number.isFinite(minValidDistance)) {
+    minValidDistance = metadata.startRange
+    maxValidDistance = maxDistance
+  }
 
   return {
     metadata,
@@ -165,6 +200,8 @@ export function parseLidarCsv(text: string): LidarDataset {
     validSamples,
     azimuths: [...azimuthSet].sort((a, b) => a - b),
     maxDistance,
+    minValidDistance,
+    maxValidDistance,
     windSpeedMin,
     windSpeedMax,
   }

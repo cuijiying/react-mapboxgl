@@ -29,16 +29,16 @@ export default function LidarWindDemo() {
 
   const [showPoints, setShowPoints] = useState(true)
   const [showSurface, setShowSurface] = useState(true)
-  const [showVectors, setShowVectors] = useState(false)
   const [showWindBarbs, setShowWindBarbs] = useState(true)
   const [showScanBeam, setShowScanBeam] = useState(true)
   const [showRangeRings, setShowRangeRings] = useState(true)
+  const [interpolateSurface, setInterpolateSurface] = useState(false)
   const [pointSize, setPointSize] = useState(6)
   const [pointOpacity, setPointOpacity] = useState(0.9)
   const [surfaceOpacity, setSurfaceOpacity] = useState(0.45)
-  const [vectorScale, setVectorScale] = useState(1.0)
   const [barbScale, setBarbScale] = useState(1.2)
   const [scanSpeed, setScanSpeed] = useState(8)
+  const [beamOpacity, setBeamOpacity] = useState(1.5)
   const [heightExaggeration, setHeightExaggeration] = useState(3.5)
   const [colorMode, setColorMode] = useState<'speed' | 'direction'>('speed')
   const [scanAngle, setScanAngle] = useState(0)
@@ -47,16 +47,16 @@ export default function LidarWindDemo() {
   const paramsRef = useRef<LidarLayerParams>({
     showPoints,
     showSurface,
-    showVectors,
     showWindBarbs,
     showScanBeam,
     showRangeRings,
+    interpolateSurface,
     pointSize,
     pointOpacity,
     surfaceOpacity,
-    vectorScale,
     barbScale,
     scanSpeed,
+    beamOpacity,
     heightExaggeration,
     colorMode,
   })
@@ -64,16 +64,16 @@ export default function LidarWindDemo() {
   paramsRef.current = {
     showPoints,
     showSurface,
-    showVectors,
     showWindBarbs,
     showScanBeam,
     showRangeRings,
+    interpolateSurface,
     pointSize,
     pointOpacity,
     surfaceOpacity,
-    vectorScale,
     barbScale,
     scanSpeed,
+    beamOpacity,
     heightExaggeration,
     colorMode,
   }
@@ -111,7 +111,7 @@ export default function LidarWindDemo() {
       container: mapContainerRef.current,
       style: MAP_STYLES.DARK,
       center: [metadata.longitude, metadata.latitude],
-      zoom: 11.5,
+      zoom: 12.4,
       pitch: 62,
       bearing: -35,
       antialias: true,
@@ -215,15 +215,15 @@ export default function LidarWindDemo() {
   }, [
     showPoints,
     showSurface,
-    showVectors,
     showWindBarbs,
     showScanBeam,
     showRangeRings,
+    interpolateSurface,
     pointSize,
     surfaceOpacity,
-    vectorScale,
     barbScale,
     scanSpeed,
+    beamOpacity,
     heightExaggeration,
     colorMode,
   ])
@@ -241,7 +241,7 @@ export default function LidarWindDemo() {
           className={styles.hoverTooltip}
           style={{ left: hover.x + 16, top: hover.y + 16 }}
         >
-          <div className={styles.tooltipHeader}>探测值</div>
+          <div className={styles.tooltipHeader}>距离门格心</div>
           <div className={styles.tooltipRow}>
             <span>方位角</span>
             <strong>{hover.info.queryAzimuth.toFixed(0)}°</strong>
@@ -324,8 +324,8 @@ export default function LidarWindDemo() {
               <strong>{dataset.validSamples.length.toLocaleString()}</strong>
             </div>
             <div className={styles.dataRow}>
-              <span>最大距离</span>
-              <strong>{(dataset.maxDistance / 1000).toFixed(1)} km</strong>
+              <span>覆盖距离</span>
+              <strong>{(dataset.maxValidDistance / 1000).toFixed(1)} km</strong>
             </div>
             <div className={styles.dataRow}>
               <span>风速范围</span>
@@ -367,30 +367,26 @@ export default function LidarWindDemo() {
           <div className={styles.legend}>
             <div className={styles.legendTitle}>风杆图例（北半球）</div>
             <svg viewBox="0 0 168 86" className={styles.barbLegendSvg} aria-hidden>
-              <g fill="none" stroke="#0066FF" strokeWidth="2.2" strokeLinecap="round">
-                <circle cx="18" cy="28" r="4" fill="#0066FF" stroke="none" />
-                <circle cx="18" cy="28" r="8" />
+              <g fill="none" stroke="#0066FF" strokeWidth="1.6" strokeLinecap="round">
+                <circle cx="18" cy="28" r="7" />
                 <text x="32" y="32" fill="#8899aa" fontSize="10" stroke="none">
                   静风
                 </text>
 
-                <circle cx="78" cy="28" r="3" fill="#0066FF" stroke="none" />
                 <line x1="78" y1="28" x2="78" y2="8" />
-                <line x1="78" y1="16" x2="66" y2="20" />
+                <line x1="78" y1="14" x2="70" y2="17" />
                 <text x="90" y="32" fill="#8899aa" fontSize="10" stroke="none">
                   2 m/s 短划
                 </text>
 
-                <circle cx="18" cy="66" r="3" fill="#0066FF" stroke="none" />
                 <line x1="18" y1="66" x2="18" y2="42" />
-                <line x1="18" y1="42" x2="2" y2="50" />
+                <line x1="18" y1="42" x2="8" y2="47" />
                 <text x="32" y="70" fill="#8899aa" fontSize="10" stroke="none">
                   4 m/s 长划
                 </text>
 
-                <circle cx="98" cy="66" r="3" fill="#0066FF" stroke="none" />
                 <line x1="98" y1="66" x2="98" y2="42" />
-                <polygon points="98,42 82,50 98,54" fill="#0066FF" stroke="none" />
+                <polygon points="98,42 88,47 98,51" fill="#0066FF" stroke="none" />
                 <text x="112" y="70" fill="#8899aa" fontSize="10" stroke="none">
                   20 m/s 旗
                 </text>
@@ -414,7 +410,6 @@ export default function LidarWindDemo() {
               ['点云辉光', showPoints, setShowPoints],
               ['PPI 曲面', showSurface, setShowSurface],
               ['风杆图', showWindBarbs, setShowWindBarbs],
-              ['风向矢量', showVectors, setShowVectors],
               ['扫描波束', showScanBeam, setShowScanBeam],
               ['距离环', showRangeRings, setShowRangeRings],
             ] as const
@@ -431,6 +426,18 @@ export default function LidarWindDemo() {
               {label}
             </label>
           ))}
+          <label className={styles.checkRow}>
+            <input
+              type="checkbox"
+              checked={interpolateSurface}
+              disabled={!showSurface}
+              onChange={(e) => {
+                setInterpolateSurface(e.target.checked)
+                triggerRepaint()
+              }}
+            />
+            格心插值
+          </label>
         </div>
 
         <div className={styles.panelSection}>
@@ -484,11 +491,11 @@ export default function LidarWindDemo() {
             />
           </div>
           <div className={styles.sliderGroup}>
-            <label>曲面透明度: {surfaceOpacity.toFixed(2)}</label>
+            <label>曲面不透明度: {surfaceOpacity.toFixed(2)}</label>
             <input
               type="range"
               min={0.1}
-              max={0.9}
+              max={1}
               step={0.05}
               value={surfaceOpacity}
               onChange={(e) => {
@@ -513,16 +520,16 @@ export default function LidarWindDemo() {
             />
           </div>
           <div className={styles.sliderGroup}>
-            <label>矢量长度: {vectorScale.toFixed(1)}×</label>
+            <label>波束不透明度: {beamOpacity.toFixed(2)}</label>
             <input
               type="range"
-              min={0.3}
-              max={3}
-              step={0.1}
-              value={vectorScale}
-              disabled={!showVectors}
+              min={0.2}
+              max={2}
+              step={0.05}
+              value={beamOpacity}
+              disabled={!showScanBeam}
               onChange={(e) => {
-                setVectorScale(Number(e.target.value))
+                setBeamOpacity(Number(e.target.value))
                 triggerRepaint()
               }}
             />
